@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-guidelines"
+dynamic = ["version"]
+description = "Reproducible, safe management of reusable Markdown guidelines"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Gaetan Semet" }]
+dependencies = [
+    "click>=8.0",
+    "platformdirs>=4.0",
+    "portalocker>=2.8",
+    "pydantic>=2.0",
+    "python-frontmatter>=1.0",
+    "PyYAML>=6.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+guidelines = "ai_guidelines:main"
+
+[project.urls]
+Homepage = "https://github.com/gsemet/ai-guidelines"
+Documentation = "https://ai-guidelines.readthedocs.io/en/stable/"
+Repository = "https://github.com/gsemet/ai-guidelines"
+Issues = "https://github.com/gsemet/ai-guidelines/issues"
+
+
+[dependency-groups]
+dev = [
+    "commitizen>=4.0",
+    "mypy>=1.18",
+    "pytest>=8.4",
+    "pytest-cov>=7.0",
+    "pytest-xdist>=3.8",
+    "ruff>=0.1",
+    "types-PyYAML>=6.0",
+]
+docs = [
+    "myst-parser>=3.0",
+    "pydata-sphinx-theme>=0.16",
+    "sphinx>=7.0",
+    "sphinx-autobuild>=2024.2",
+    "sphinx-autodoc-typehints>=2.0",
+    "sphinx-click>=6.0",
+    "sphinx-copybutton>=0.5.2",
+    "sphinx-design>=0.6.1",
+]
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_guidelines"]
+exclude = ["src/ai_guidelines/tests/**"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "scm"
+tag_format = "v$version"
+changelog_file = "CHANGELOG.md"
+update_changelog_on_bump = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# Installed guidelines are vendored, lock-managed content owned upstream.
+# Reformatting them would rewrite bytes the lockfile hashes, breaking ownership.
+extend-exclude = [".github/guidelines", ".agents/guidelines"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "PIE", "SIM"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -m 'not slow'"
+testpaths = ["src/ai_guidelines/tests"]
+markers = [
+    "slow: tests that shell out to a build backend and require network access",
+]
+
+[tool.coverage.run]
+source = ["ai_guidelines"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+exclude = ["^src/ai_guidelines/tests/"]
+strict = true
+warn_unused_configs = true

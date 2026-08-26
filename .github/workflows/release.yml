@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      increment:
+        description: Version increment to apply
+        type: choice
+        default: auto
+        options: [auto, major, minor, patch]
+      draft:
+        description: Create a draft release and skip publishing
+        type: boolean
+        default: false
+      force:
+        description: Allow a bump with no eligible conventional commits
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Quality gate
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Tag and release
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Refuse to release from a dirty tree
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "::error::The working tree is dirty; refusing to release."
+            git status --porcelain
+            exit 1
+          fi
+
+      - name: Require a previous tag
+        run: |
+          if ! git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            echo "::error::No existing tag found. Create the initial tag manually, e.g. 'git tag v0.1.0 && git push --tags'."
+            exit 1
+          fi
+
+      - name: Compute the next version
+        id: bump
+        run: |
+          set -euo pipefail
+          args=(--get-next --yes)
+          if [[ "${{ inputs.increment }}" != "auto" ]]; then
+            args+=(--increment "$(echo '${{ inputs.increment }}' | tr '[:lower:]' '[:upper:]')")
+          fi
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            args+=(--allow-no-commit)
+          fi
+          if ! version="$(uv run cz bump "${args[@]}" 2>bump.err)"; then
+            cat bump.err >&2
+            echo "::error::Could not compute the next version. There are probably no eligible conventional commits since the last tag. Re-run with 'force' to bump anyway."
+            exit 1
+          fi
+          version="$(echo "$version" | tr -d '[:space:]')"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Computed version '$version' is not a bare semantic version."
+            exit 1
+          fi
+          tag="v$version"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+            echo "::error::Computed tag '$tag' has an unexpected shape."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag locally
+        run: |
+          # Local-only: the version is SCM-derived, so no bump commit is needed
+          # and nothing is pushed to the default branch.
+          git tag "${{ steps.bump.outputs.tag }}"
+
+      - name: Generate release notes from the changelog
+        run: |
+          set -euo pipefail
+          uv run cz changelog --dry-run "${{ steps.bump.outputs.version }}" > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "Release ${{ steps.bump.outputs.tag }}" > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Re-check that the release and remote tag are absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.bump.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Remote tag $tag appeared during the run."
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists."
+            exit 1
+          fi
+
+      - name: Push the tag
+        run: git push origin "${{ steps.bump.outputs.tag }}"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.bump.outputs.tag }}" \
+            --verify-tag \
+            --title "${{ steps.bump.outputs.tag }}" \
+            --notes-file release-notes.md \
+            ${{ inputs.draft && '--draft' || '' }}
+
+  publish:
+    name: Publish to PyPI
+    needs: release
+    if: ${{ !inputs.draft }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      # Required for PyPI Trusted Publishing (OIDC). No API token is used.
+      id-token: write
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

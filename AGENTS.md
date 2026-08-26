@@ -1,0 +1,37 @@
+# AGENTS.md — ai-guidelines project map
+
+Read `CONSTITUTION.md` before changing the project.
+
+## Technology stacks
+
+- `uv`
+- `just`
+
+## Where to Find Rules
+
+- Development, security, API, dependency, testing, and commit rules:
+  `CONSTITUTION.md`.
+- Domain-specific rules and reusable guidance: `.github/guidelines/`.
+  Read only the guideline relevant to the current change.
+- Exact commands and quality gates: `justfile --list`.
+
+## Quality Gate
+
+You HAVE TO ensure the main quality gate (`just preflight`) always pass
+at end of your changes.
+Always ensure to fix all issues reported in the best possible way,
+to ensure the upmost quality of the project.
+
+## Main Commands
+
+```text
+just install      # install development dependencies
+just fmt          # format Python code
+just fmt-check    # verify formatting
+just ruff-check   # run Ruff linting
+just mypy         # run strict type checking
+just test         # run pytest with coverage and xdist
+just build        # build sdist and wheel
+just preflight    # main quality gate
+just update       # update locked dependencies
+```
