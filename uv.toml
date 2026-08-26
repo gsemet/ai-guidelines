@@ -1,0 +1,7 @@
+python-preference = "only-managed"
+
+# Keep this standalone project on the public Python Package Index. The
+# explicit default index prevents uv from inheriting a configured corporate
+# or workspace package index for project dependencies.
+index-url = "https://pypi.org/simple"
+index-strategy = "first-index"

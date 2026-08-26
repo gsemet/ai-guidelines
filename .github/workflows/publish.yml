@@ -1,0 +1,50 @@
+name: Publish
+
+# Manual recovery path: republish an existing tag when the release workflow's
+# publish job failed or was skipped (for example, after a draft release).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish (for example v1.2.0)
+        type: string
+        required: true
+
+concurrency:
+  group: publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      # Required for PyPI Trusted Publishing (OIDC). No API token is used.
+      id-token: write
+    steps:
+      - name: Validate the tag shape
+        run: |
+          if [[ ! "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+            echo "::error::Tag '${{ inputs.tag }}' has an unexpected shape."
+            exit 1
+          fi
+
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

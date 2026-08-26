@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.10', '3.13']
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          # hatch-vcs derives the version from tags.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install development dependencies
+        run: uv sync --dev --group docs
+
+      # `ci-check` is a one-line alias to `preflight`, so CI and local runs are
+      # identical by construction. `shell: bash` selects Git Bash on the Windows
+      # runner, so the justfile's POSIX shell is available on every platform.
+      - name: Run quality gate
+        shell: bash
+        run: just ci-check
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Install wheel in isolation
+        shell: bash
+        run: |
+          uv venv .ci-wheel-venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_path=.ci-wheel-venv/Scripts/python.exe
+            guidelines_path=.ci-wheel-venv/Scripts/guidelines.exe
+          else
+            python_path=.ci-wheel-venv/bin/python
+            guidelines_path=.ci-wheel-venv/bin/guidelines
+          fi
+          echo "python_path=$python_path" >> "$GITHUB_ENV"
+          echo "guidelines_path=$guidelines_path" >> "$GITHUB_ENV"
+          uv pip install --python "$python_path" dist/*.whl
+
+      - name: Smoke-test installed command
+        shell: bash
+        run: |
+          "$guidelines_path" --help
+          mkdir -p .ci-smoke/source .ci-smoke/project
+          printf 'quality\n' > .ci-smoke/source/quality.guideline.md
+          cd .ci-smoke/project
+          "$GITHUB_WORKSPACE/$guidelines_path" add ../source quality --alias quality
+          "$GITHUB_WORKSPACE/$guidelines_path" sync
+          test -f .github/guidelines/quality.guidelines.md
+          test -f guidelines.lock.json
