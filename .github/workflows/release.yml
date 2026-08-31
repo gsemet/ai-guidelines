@@ -39,12 +39,12 @@ jobs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
@@ -56,13 +56,6 @@ jobs:
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "::error::The working tree is dirty; refusing to release."
             git status --porcelain
-            exit 1
-          fi
-
-      - name: Require a previous tag
-        run: |
-          if ! git describe --tags --abbrev=0 >/dev/null 2>&1; then
-            echo "::error::No existing tag found. Create the initial tag manually, e.g. 'git tag v0.1.0 && git push --tags'."
             exit 1
           fi
 
@@ -147,20 +140,22 @@ jobs:
     needs: release
     if: ${{ !inputs.draft }}
     runs-on: ubuntu-latest
-    environment: pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ai-guidelines
     permissions:
       contents: read
       # Required for PyPI Trusted Publishing (OIDC). No API token is used.
       id-token: write
     steps:
       - name: Check out the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.release.outputs.tag }}
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.0.1
 
       - name: Build distributions
         run: uv build

@@ -407,14 +407,15 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
 
     remote = tmp_path / "remote.git"
     _git(["clone", "--bare", str(working), str(remote)])
+    remote_url = remote.resolve().as_uri()
     location = SourceLocation(
-        expression=str(remote),
+        expression=remote_url,
         source_type="git",
-        repository=str(remote),
+        repository=remote_url,
         relative_path="guidelines",
         requested_ref="v1.0.0",
         kind="folder",
-        canonical_source=f"{remote}/guidelines",
+        canonical_source=f"{remote_url}/guidelines",
     )
 
     with acquire_source(location, temp_root=tmp_path / "cache") as acquired:

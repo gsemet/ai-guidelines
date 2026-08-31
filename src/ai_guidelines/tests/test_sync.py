@@ -25,7 +25,7 @@ from ai_guidelines.sync import FrozenSyncError, SyncError, sync_manifest
 def _write(path: Path, content: str) -> None:
     """Write one UTF-8 file and create its parent directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8", newline="")
 
 
 def _manifest(

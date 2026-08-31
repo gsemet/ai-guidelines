@@ -24,7 +24,7 @@ from ai_guidelines.reconcile import (
 def _write(path: Path, content: str) -> None:
     """Write one UTF-8 source or target file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8", newline="")
 
 
 def test_destination_map_flattens_and_prefers_plural_suffix(tmp_path: Path) -> None:
