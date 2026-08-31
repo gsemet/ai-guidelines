@@ -15,9 +15,12 @@ def test_workflow_has_public_cross_platform_python_matrix(project_root: Path) ->
     assert set(matrix["os"]) == {"ubuntu-latest", "macos-latest", "windows-latest"}
     assert "3.10" in matrix["python-version"]
     actions = [step["uses"] for step in job["steps"] if "uses" in step]
-    assert "actions/checkout@v4" in actions
-    assert "actions/setup-python@v5" in actions
-    assert "astral-sh/setup-uv@v6" in actions
+    assert "actions/checkout@v7.0.1" in actions
+    assert "astral-sh/setup-uv@v10.0.1" in actions
+    setup_uv = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("astral-sh/setup-uv@")
+    )
+    assert setup_uv["with"]["python-version"] == "${{ matrix.python-version }}"
 
 
 def test_workflow_runs_the_complete_gate_and_artifact_smoke(project_root: Path) -> None:
@@ -37,7 +40,7 @@ def test_workflow_runs_the_complete_gate_and_artifact_smoke(project_root: Path) 
         "uv build",
         "uv pip install",
         "--help",
-        "add ../source quality",
+        'add "$source_path" quality',
         '" sync',
     ):
         assert command in commands, command
@@ -53,10 +56,18 @@ def test_release_and_publish_workflows_use_trusted_publishing(project_root: Path
             (project_root / ".github/workflows" / name).read_text(encoding="utf-8")
         )
         publish = workflow["jobs"]["publish"]
-        assert publish["environment"] == "pypi", name
+        assert publish["environment"]["name"] == "pypi", name
+        assert publish["environment"]["url"] == "https://pypi.org/p/ai-guidelines", name
         assert publish["permissions"]["id-token"] == "write", name
         uses = [step["uses"] for step in publish["steps"] if "uses" in step]
         assert "pypa/gh-action-pypi-publish@release/v1" in uses, name
         text = (project_root / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "PYPI_API_TOKEN" not in text, name
         assert "COPILOT_GITHUB_TOKEN" not in text, name
+
+
+def test_release_workflow_can_create_the_initial_tag(project_root: Path) -> None:
+    """A new project can publish its first release through the normal workflow."""
+    text = (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "No existing tag found" not in text
+    assert 'git tag "${{ steps.bump.outputs.tag }}"' in text

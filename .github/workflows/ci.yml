@@ -12,6 +12,8 @@ jobs:
   quality:
     name: Quality (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -20,23 +22,21 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           # hatch-vcs derives the version from tags.
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          # uv.toml deliberately selects uv-managed interpreters, so the
+          # matrix version must be passed to uv rather than setup-python.
+          python-version: ${{ matrix.python-version }}
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
 
       - name: Install development dependencies
         run: uv sync --dev --group docs
@@ -49,11 +49,15 @@ jobs:
         run: just ci-check
 
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-        uses: codecov/codecov-action@v5
+        if: >-
+          matrix.os == 'ubuntu-latest' &&
+          matrix.python-version == '3.13' &&
+          env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v7.0.0
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
+          token: ${{ env.CODECOV_TOKEN }}
 
       - name: Build distributions
         run: uv build
@@ -79,8 +83,9 @@ jobs:
           "$guidelines_path" --help
           mkdir -p .ci-smoke/source .ci-smoke/project
           printf 'quality\n' > .ci-smoke/source/quality.guideline.md
+          source_path="$GITHUB_WORKSPACE/.ci-smoke/source"
           cd .ci-smoke/project
-          "$GITHUB_WORKSPACE/$guidelines_path" add ../source quality --alias quality
+          "$GITHUB_WORKSPACE/$guidelines_path" add "$source_path" quality --alias quality
           "$GITHUB_WORKSPACE/$guidelines_path" sync
           test -f .github/guidelines/quality.guidelines.md
           test -f guidelines.lock.json
