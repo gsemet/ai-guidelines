@@ -368,7 +368,7 @@ def test_sync_cleans_up_legacy_singular_target_after_normalization(tmp_path: Pat
     target = project / ".agents/guidelines"
     target.mkdir(parents=True)
     legacy = target / "team.guideline.md"
-    legacy.write_text("legacy content\n", encoding="utf-8")
+    _write(legacy, "legacy content\n")
     declaration = GuidelineDeclaration(source="./source/", target_path=".agents/guidelines")
     _manifest(project, declaration)
     save_lockfile(
