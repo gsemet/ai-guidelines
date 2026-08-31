@@ -407,15 +407,18 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
 
     remote = tmp_path / "remote.git"
     _git(["clone", "--bare", str(working), str(remote)])
-    remote_url = remote.resolve().as_uri()
+    # Git for Windows accepts drive-qualified paths with forward slashes. A
+    # platform-native string contains backslashes, which Git interprets as
+    # escapes while cloning the local test remote.
+    remote_repository = remote.resolve().as_posix()
     location = SourceLocation(
-        expression=remote_url,
+        expression=remote_repository,
         source_type="git",
-        repository=remote_url,
+        repository=remote_repository,
         relative_path="guidelines",
         requested_ref="v1.0.0",
         kind="folder",
-        canonical_source=f"{remote_url}/guidelines",
+        canonical_source=f"{remote_repository}/guidelines",
     )
 
     with acquire_source(location, temp_root=tmp_path / "cache") as acquired:
