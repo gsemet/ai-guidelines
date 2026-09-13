@@ -407,10 +407,9 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
 
     remote = tmp_path / "remote.git"
     _git(["clone", "--bare", str(working), str(remote)])
-    # Git for Windows accepts drive-qualified paths with forward slashes. A
-    # platform-native string contains backslashes, which Git interprets as
-    # escapes while cloning the local test remote.
-    remote_repository = remote.resolve().as_posix()
+    # An explicit file URI is unambiguous to Git on every supported platform,
+    # including Windows drive-qualified paths.
+    remote_repository = remote.resolve().as_uri()
     location = SourceLocation(
         expression=remote_repository,
         source_type="git",

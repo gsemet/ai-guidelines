@@ -14,6 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:
@@ -60,12 +61,12 @@ jobs:
           token: ${{ env.CODECOV_TOKEN }}
 
       - name: Build distributions
-        run: uv build
+        run: uv build --python "${{ matrix.python-version }}"
 
       - name: Install wheel in isolation
         shell: bash
         run: |
-          uv venv .ci-wheel-venv
+          uv venv --python "${{ matrix.python-version }}" .ci-wheel-venv
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             python_path=.ci-wheel-venv/Scripts/python.exe
             guidelines_path=.ci-wheel-venv/Scripts/guidelines.exe

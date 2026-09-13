@@ -92,20 +92,32 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes from the changelog
+        run: |
+          set -euo pipefail
+          changelog_args=(
+            --dry-run
+            --unreleased-version "${{ steps.bump.outputs.version }}"
+          )
+          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+          if [[ -n "$previous_tag" ]]; then
+            changelog_args+=(--start-rev "$previous_tag")
+          fi
+          uv run cz changelog "${changelog_args[@]}" > release-notes.md
+          if [[ ! -s release-notes.md ]] || ! grep -q '^## ' release-notes.md; then
+            cat > release-notes.md <<'EOF'
+          ## Maintenance
+
+          This release contains maintenance and internal improvements. No user-facing behavior changed.
+          EOF
+          fi
+          cat release-notes.md
+
       - name: Create the tag locally
         run: |
           # Local-only: the version is SCM-derived, so no bump commit is needed
           # and nothing is pushed to the default branch.
           git tag "${{ steps.bump.outputs.tag }}"
-
-      - name: Generate release notes from the changelog
-        run: |
-          set -euo pipefail
-          uv run cz changelog --dry-run "${{ steps.bump.outputs.version }}" > release-notes.md
-          if [[ ! -s release-notes.md ]]; then
-            echo "Release ${{ steps.bump.outputs.tag }}" > release-notes.md
-          fi
-          cat release-notes.md
 
       - name: Re-check that the release and remote tag are absent
         env:
@@ -159,6 +171,24 @@ jobs:
 
       - name: Build distributions
         run: uv build
+
+      - name: Verify package version
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version="${RELEASE_TAG#v}"
+          shopt -s nullglob
+          artifacts=(
+            dist/ai_guidelines-"$expected_version"-*.whl
+            dist/ai_guidelines-"$expected_version".tar.gz
+          )
+          if (( ${#artifacts[@]} != 2 )); then
+            echo "::error::Built package artifacts do not match $RELEASE_TAG."
+            printf '%s\n' dist/*
+            exit 1
+          fi
 
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1

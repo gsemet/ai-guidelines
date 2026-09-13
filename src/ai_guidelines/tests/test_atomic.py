@@ -44,3 +44,7 @@ def test_advisory_lock_serializes_one_operation(tmp_path: Path) -> None:
 
     with advisory_lock(lock_path):
         assert lock_path.exists()
+
+    assert lock_path.exists()
+    with advisory_lock(lock_path):
+        pass
