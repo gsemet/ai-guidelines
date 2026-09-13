@@ -414,7 +414,10 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
 
     def recording_runner(args: Sequence[str], cwd: Path | None = None) -> str:
         commands.append(list(args))
-        return _git(args, cwd)
+        try:
+            return _git(args, cwd)
+        except subprocess.CalledProcessError as error:
+            pytest.fail(f"Git command failed: {list(args)!r}: {error.stderr}")
 
     location = SourceLocation(
         expression=remote_repository,
