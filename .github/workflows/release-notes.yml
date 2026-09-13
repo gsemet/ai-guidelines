@@ -1,0 +1,129 @@
+name: Generate release notes (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to generate a draft release for"
+        required: true
+        type: string
+
+concurrency:
+  group: release-notes-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  generate-release-notes:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require the default branch
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_ref="refs/heads/$DEFAULT_BRANCH"
+          if [[ "$WORKFLOW_REF" != "$expected_ref" ]]; then
+            echo "::error::Release-note recovery must be dispatched from the default branch ($DEFAULT_BRANCH)."
+            echo "::error::Received workflow ref: $WORKFLOW_REF"
+            exit 1
+          fi
+
+      - name: Check out repository history
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Validate and check out the existing release tag
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TARGET_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TARGET_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a semantic-version tag such as v0.7.0, got '$TARGET_TAG'."
+            exit 1
+          fi
+          if ! git ls-remote --exit-code --refs origin "refs/tags/$TARGET_TAG" >/dev/null; then
+            echo "::error::Remote tag $TARGET_TAG does not exist."
+            exit 1
+          fi
+
+          git fetch --force origin "refs/tags/$TARGET_TAG:refs/tags/$TARGET_TAG"
+          git fetch --force origin \
+            "refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          target_commit="$(git rev-parse --verify "refs/tags/$TARGET_TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$target_commit" "refs/remotes/origin/$DEFAULT_BRANCH"; then
+            echo "::error::Release tag $TARGET_TAG is not reachable from the default branch."
+            exit 1
+          fi
+          git checkout --detach "$target_commit"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Install release tooling
+        run: uv sync --dev
+
+      - name: Resolve release range
+        id: range
+        shell: bash
+        env:
+          TARGET_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          previous_ref="$(git tag --sort=-v:refname --merged "$TARGET_TAG" \
+            | awk -v current="$TARGET_TAG" '$0 != current { print; exit }')"
+          if [[ -z "$previous_ref" ]]; then
+            previous_ref="$(git rev-list --max-parents=0 "$TARGET_TAG" | tail -n 1)"
+          fi
+
+          echo "target_tag=$TARGET_TAG" >> "$GITHUB_OUTPUT"
+          echo "previous_ref=$previous_ref" >> "$GITHUB_OUTPUT"
+          echo "Generating notes from $previous_ref to $TARGET_TAG."
+
+      - name: Generate release notes
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          PREVIOUS_REF: ${{ steps.range.outputs.previous_ref }}
+          TARGET_TAG: ${{ steps.range.outputs.target_tag }}
+        run: |
+          set -euo pipefail
+          uv run -- python .github/skills/gh-release-notes/scripts/generate_release_notes.py \
+            --from-ref "$PREVIOUS_REF" \
+            --to-ref "$TARGET_TAG" \
+            --output release-notes.md
+
+      - name: Upload generated notes for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ steps.range.outputs.target_tag }}
+          path: release-notes.md
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ steps.range.outputs.target_tag }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A GitHub Release already exists for $TARGET_TAG."
+            exit 1
+          fi
+
+          gh release create "$TARGET_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "$TARGET_TAG" \
+            --notes-file release-notes.md

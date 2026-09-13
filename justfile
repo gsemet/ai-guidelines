@@ -33,6 +33,7 @@ style:
 [group('style')]
 style-check:
     {{ uv }} run ruff format --check .
+    {{ uv }} run ruff format --check .github/skills/gh-release-notes/scripts
 
 # Alias for `style`.
 [group('style')]
@@ -46,6 +47,7 @@ fmt-check: style-check
 [group('lint')]
 lint:
     {{ uv }} run ruff check .
+    {{ uv }} run ruff check .github/skills/gh-release-notes/scripts
 
 # Alias for `lint`.
 [group('lint')]
@@ -55,6 +57,7 @@ ruff-check: lint
 [group('lint')]
 typecheck:
     {{ uv }} run mypy src
+    {{ uv }} run mypy .github/skills/gh-release-notes/scripts
 
 # Alias for `typecheck`.
 [group('lint')]

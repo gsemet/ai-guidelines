@@ -65,7 +65,8 @@ def test_release_and_publish_workflows_use_trusted_publishing(project_root: Path
         assert "pypa/gh-action-pypi-publish@release/v1" in uses, name
         text = (project_root / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "PYPI_API_TOKEN" not in text, name
-        assert "COPILOT_GITHUB_TOKEN" not in text, name
+        if name == "publish.yml":
+            assert "COPILOT_GITHUB_TOKEN" not in text, name
 
 
 def test_release_workflow_can_create_the_initial_tag(project_root: Path) -> None:
@@ -76,14 +77,16 @@ def test_release_workflow_can_create_the_initial_tag(project_root: Path) -> None
 
 
 def test_release_workflow_generates_notes_before_tagging(project_root: Path) -> None:
-    """Release notes use unreleased commits before the temporary tag exists."""
+    """Release notes use the exact range before the temporary tag exists."""
     text = (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    notes_position = text.index("Generate release notes from the changelog")
+    notes_position = text.index("Generate release notes with Copilot")
     tag_position = text.index('git tag "${{ steps.bump.outputs.tag }}"')
     assert notes_position < tag_position
-    assert "--unreleased-version" in text
-    assert "--start-rev" in text
-    assert "## Maintenance" in text
+    assert "generate_release_notes.py" in text
+    assert '--from-ref "$FROM_REF"' in text
+    assert '--to-ref "$TO_REF"' in text
+    assert "COPILOT_GITHUB_TOKEN" in text
+    assert "actions/upload-artifact@v4" in text
 
 
 def test_publish_workflow_supports_manual_tag_recovery(project_root: Path) -> None:

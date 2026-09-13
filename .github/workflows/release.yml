@@ -63,6 +63,10 @@ jobs:
         id: bump
         run: |
           set -euo pipefail
+          previous_ref="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+          if [[ -z "$previous_ref" ]]; then
+            previous_ref="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+          fi
           args=(--get-next --yes)
           if [[ "${{ inputs.increment }}" != "auto" ]]; then
             args+=(--increment "$(echo '${{ inputs.increment }}' | tr '[:lower:]' '[:upper:]')")
@@ -89,29 +93,27 @@ jobs:
             echo "::error::Tag $tag already exists."
             exit 1
           fi
+          echo "previous_ref=$previous_ref" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Generate release notes from the changelog
+      - name: Generate release notes with Copilot
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          FROM_REF: ${{ steps.bump.outputs.previous_ref }}
+          TO_REF: ${{ steps.bump.outputs.tag }}
         run: |
           set -euo pipefail
-          changelog_args=(
-            --dry-run
-            --unreleased-version "${{ steps.bump.outputs.version }}"
-          )
-          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
-          if [[ -n "$previous_tag" ]]; then
-            changelog_args+=(--start-rev "$previous_tag")
-          fi
-          uv run cz changelog "${changelog_args[@]}" > release-notes.md
-          if [[ ! -s release-notes.md ]] || ! grep -q '^## ' release-notes.md; then
-            cat > release-notes.md <<'EOF'
-          ## Maintenance
+          uv run -- python .github/skills/gh-release-notes/scripts/generate_release_notes.py \
+            --from-ref "$FROM_REF" \
+            --to-ref "$TO_REF" \
+            --output release-notes.md
 
-          This release contains maintenance and internal improvements. No user-facing behavior changed.
-          EOF
-          fi
-          cat release-notes.md
+      - name: Upload generated release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ steps.bump.outputs.tag }}
+          path: release-notes.md
 
       - name: Create the tag locally
         run: |

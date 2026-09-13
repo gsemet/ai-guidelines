@@ -27,6 +27,15 @@ The version is **SCM-derived** via `hatch-vcs`. It is not written in `pyproject.
 `__init__.py`, or in any test. Never hardcode it. Release by dispatching the `Release`
 workflow, which tags with Commitizen and publishes to PyPI through Trusted Publishing.
 
+The `Release` workflow generates the GitHub Release body with the repository's
+`gh-release-notes` Copilot skill from the exact previous-release-to-target diff. It writes
+the validated Markdown to `release-notes.md` and uploads that file as a workflow artifact.
+The first release uses the repository's root commit as its starting ref. If notes need to
+be regenerated for an existing tag, use the **Generate release notes (manual)** workflow.
+
+Both workflows require a repository secret named `COPILOT_GITHUB_TOKEN`, containing a
+fine-grained token with the **Copilot Requests** permission.
+
 ### PyPI Trusted Publishing
 
 Before the first release, configure a pending publisher at <https://pypi.org/manage/account/publishing/>:
