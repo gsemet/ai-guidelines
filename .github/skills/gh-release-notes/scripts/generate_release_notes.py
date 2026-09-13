@@ -161,10 +161,8 @@ def build_copilot_command(prompt: str, model: str | None) -> list[str]:
         "--output-format",
         "text",
         "--disable-builtin-mcps",
+        "--allow-all-tools",
         "--available-tools=read,create,edit,bash",
-        "--allow-tool=read",
-        "--allow-tool=write",
-        "--allow-tool=shell(git:*)",
         "--allow-url=https://github.com",
         "--allow-url=https://ai-guidelines.readthedocs.io",
     ]
