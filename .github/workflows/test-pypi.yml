@@ -1,0 +1,80 @@
+name: TestPyPI
+
+# Non-production publication for validating the built distributions and the
+# TestPyPI Trusted Publishing configuration.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to upload to TestPyPI
+        type: string
+        required: true
+
+concurrency:
+  group: test-pypi-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to TestPyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/ai-guidelines
+    permissions:
+      contents: read
+      # Required for TestPyPI Trusted Publishing (OIDC). No API token is used.
+      id-token: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Validate tag
+        env:
+          TARGET_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TARGET_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TARGET_TAG' has an unexpected shape."
+            exit 1
+          fi
+          if ! git ls-remote --exit-code --refs origin "refs/tags/$TARGET_TAG" >/dev/null; then
+            echo "::error::Remote tag $TARGET_TAG does not exist."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Verify package version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version="${RELEASE_TAG#v}"
+          shopt -s nullglob
+          artifacts=(
+            dist/ai_guidelines-"$expected_version"-*.whl
+            dist/ai_guidelines-"$expected_version".tar.gz
+          )
+          if (( ${#artifacts[@]} != 2 )); then
+            echo "::error::Built package artifacts do not match $RELEASE_TAG."
+            printf '%s\n' dist/*
+            exit 1
+          fi
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

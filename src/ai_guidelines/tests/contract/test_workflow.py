@@ -53,20 +53,21 @@ def test_workflow_runs_the_complete_gate_and_artifact_smoke(project_root: Path) 
 
 def test_release_and_publish_workflows_use_trusted_publishing(project_root: Path) -> None:
     """Publishing uses OIDC Trusted Publishing rather than a stored API token."""
-    for name in ("release.yml", "publish.yml"):
+    for name, environment, environment_url in (
+        ("publish.yml", "pypi", "https://pypi.org/p/ai-guidelines"),
+        ("test-pypi.yml", "testpypi", "https://test.pypi.org/p/ai-guidelines"),
+    ):
         workflow = yaml.safe_load(
             (project_root / ".github/workflows" / name).read_text(encoding="utf-8")
         )
         publish = workflow["jobs"]["publish"]
-        assert publish["environment"]["name"] == "pypi", name
-        assert publish["environment"]["url"] == "https://pypi.org/p/ai-guidelines", name
+        assert publish["environment"]["name"] == environment, name
+        assert publish["environment"]["url"] == environment_url, name
         assert publish["permissions"]["id-token"] == "write", name
         uses = [step["uses"] for step in publish["steps"] if "uses" in step]
         assert "pypa/gh-action-pypi-publish@release/v1" in uses, name
         text = (project_root / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "PYPI_API_TOKEN" not in text, name
-        if name == "publish.yml":
-            assert "COPILOT_GITHUB_TOKEN" not in text, name
 
 
 def test_release_workflow_can_create_the_initial_tag(project_root: Path) -> None:
@@ -90,9 +91,32 @@ def test_release_workflow_generates_notes_from_the_local_tag(project_root: Path)
     assert "actions/upload-artifact@v4" in text
 
 
-def test_publish_workflow_supports_manual_tag_recovery(project_root: Path) -> None:
-    """An existing version tag can be republished through manual recovery."""
+def test_release_workflow_does_not_publish_packages(project_root: Path) -> None:
+    """Keep draft release tests from exposing a skipped production job."""
+    workflow = yaml.safe_load(
+        (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    )
+
+    assert set(workflow["jobs"]) == {"ci", "release"}
+
+
+def test_production_publish_workflow_requires_a_release_tag(project_root: Path) -> None:
+    """Prevent production PyPI publication from a default-branch dispatch."""
     text = (project_root / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+
     assert "workflow_dispatch:" in text
-    assert "ref: ${{ inputs.tag }}" in text
-    assert "TARGET_TAG: ${{ inputs.tag }}" in text
+    assert "refs/tags/" in text
+    assert "inputs.tag" not in text
+    assert "github.ref_name" in text
+    assert "repository-url:" not in text
+
+
+def test_test_pypi_workflow_is_explicitly_non_production(project_root: Path) -> None:
+    """Provide a separate TestPyPI path for release validation."""
+    workflow_path = project_root / ".github/workflows/test-pypi.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    text = workflow_path.read_text(encoding="utf-8")
+
+    assert workflow["jobs"]["publish"]["environment"]["name"] == "testpypi"
+    assert "https://test.pypi.org/legacy/" in text
+    assert "inputs.tag" in text
