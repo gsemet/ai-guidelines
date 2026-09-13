@@ -230,8 +230,8 @@ def _checkout_path(location: SourceLocation, cache_root: Path | None = None) -> 
         f"{location.repository}\0{location.requested_ref or 'HEAD'}".encode()
     ).hexdigest()[:12]
     pending_name = (
-        f"{(readable_identity or 'repository')[:48]}_"
-        f"{(requested_ref or 'HEAD')[:24]}_{identity_digest}_pending"
+        f"{(readable_identity or 'repository')[:24]}_"
+        f"{(requested_ref or 'HEAD')[:12]}_{identity_digest}_pending"
     )
     return root / f"{pending_name}_{uuid.uuid4().hex}"
 
