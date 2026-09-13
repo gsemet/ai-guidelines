@@ -33,8 +33,10 @@ the validated Markdown to `release-notes.md` and uploads that file as a workflow
 The first release uses the repository's root commit as its starting ref. If notes need to
 be regenerated for an existing tag, use the **Generate release notes (manual)** workflow.
 
-Both workflows require a repository secret named `COPILOT_GITHUB_TOKEN`, containing a
-fine-grained token with the **Copilot Requests** permission.
+Both workflows authenticate Copilot CLI with the short-lived Actions `GITHUB_TOKEN` and
+grant it the `copilot-requests: write` workflow permission. The GitHub organization must
+allow Copilot CLI usage billed to the organization. No long-lived repository secret is
+required.
 
 ### PyPI Trusted Publishing
 

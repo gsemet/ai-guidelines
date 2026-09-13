@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: write
+  copilot-requests: write
 
 jobs:
   generate-release-notes:
@@ -93,7 +94,7 @@ jobs:
 
       - name: Generate release notes
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           PREVIOUS_REF: ${{ steps.range.outputs.previous_ref }}
           TARGET_TAG: ${{ steps.range.outputs.target_tag }}
         run: |

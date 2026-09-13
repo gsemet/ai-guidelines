@@ -64,12 +64,22 @@ def test_build_prompt_requires_file_output_and_user_impact() -> None:
 
 
 def test_require_copilot_token_rejects_missing_authentication(monkeypatch: MonkeyPatch) -> None:
-    """Fail before invoking Copilot when the workflow secret is unavailable."""
+    """Fail before invoking Copilot when no supported token is available."""
     monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-    with pytest.raises(RuntimeError, match="COPILOT_GITHUB_TOKEN or GH_TOKEN"):
+    with pytest.raises(RuntimeError, match="COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN"):
         require_copilot_token()
+
+
+def test_require_copilot_token_accepts_actions_token(monkeypatch: MonkeyPatch) -> None:
+    """Allow GitHub Actions authentication without a long-lived secret."""
+    monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "actions-token")
+
+    require_copilot_token()
 
 
 def test_generate_release_notes_writes_maintenance_notes_without_copilot(
