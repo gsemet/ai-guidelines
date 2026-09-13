@@ -433,7 +433,10 @@ def _clone_remote(
         reference_kind = _classify_remote_reference(
             location.repository, resolved_ref or requested_ref, runner
         )
-    clone_command = ["clone", "--no-checkout", "--filter=blob:none", "--no-tags"]
+    clone_command = ["clone", "--no-checkout"]
+    if urlsplit(location.repository).scheme.lower() != "file":
+        clone_command.append("--filter=blob:none")
+    clone_command.append("--no-tags")
     if resolved_ref and not _COMMIT.fullmatch(resolved_ref):
         clone_command.extend(["--branch", resolved_ref])
     clone_command.extend([location.repository, str(checkout)])

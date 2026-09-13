@@ -36,11 +36,11 @@ Before the first release, configure a pending publisher at <https://pypi.org/man
 | PyPI project name | `ai-guidelines` |
 | Owner | `gsemet` |
 | Repository name | `ai-guidelines` |
-| Workflow name | `.github/workflows/release.yml` |
+| Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
 Add a second pending publisher with the same values and
-`.github/workflows/publish.yml` as the workflow name to support manual recovery.
+`publish.yml` as the workflow name to support manual recovery.
 The GitHub `pypi` environment already exists and is deliberately used by both workflows.
 No `PYPI_API_TOKEN` secret is required: the workflows request an OIDC token and the PyPI
 publisher configuration limits which workflow can exchange it.
