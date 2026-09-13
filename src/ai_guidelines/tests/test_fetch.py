@@ -439,7 +439,7 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
         assert acquired.path == acquired.root / "guidelines"
         assert (acquired.path / "team.guideline.md").read_text(encoding="utf-8") == "# Team\n"
         assert not (acquired.root / "not-selected.txt").exists()
-        assert len(acquired.root.name) <= 96
+        assert len(acquired.root.name) <= 72
 
     clone = next(command for command in commands if command[0] == "clone")
     assert "--filter=blob:none" not in clone

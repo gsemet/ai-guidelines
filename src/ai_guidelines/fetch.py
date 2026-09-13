@@ -225,14 +225,10 @@ def _checkout_path(location: SourceLocation, cache_root: Path | None = None) -> 
     repository_name = parsed.netloc + parsed.path if parsed.netloc else location.repository
     repository_name = repository_name.rstrip("/").removesuffix(".git")
     readable_identity = re.sub(r"[^A-Za-z0-9._-]+", "_", repository_name).strip("._-")
-    requested_ref = re.sub(r"[^A-Za-z0-9._-]+", "_", location.requested_ref or "HEAD").strip("._-")
     identity_digest = sha256(
         f"{location.repository}\0{location.requested_ref or 'HEAD'}".encode()
     ).hexdigest()[:12]
-    pending_name = (
-        f"{(readable_identity or 'repository')[:24]}_"
-        f"{(requested_ref or 'HEAD')[:12]}_{identity_digest}_pending"
-    )
+    pending_name = f"ag_{(readable_identity or 'repository')[:8]}_{identity_digest}_pending"
     return root / f"{pending_name}_{uuid.uuid4().hex}"
 
 
