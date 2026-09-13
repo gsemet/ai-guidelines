@@ -1,17 +1,11 @@
 name: Publish
 
-# Manual recovery path: republish an existing tag when the release workflow's
-# publish job failed or was skipped (for example, after a draft release).
+# Production publication is deliberately dispatched from the release tag.
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to publish (for example v1.2.0)
-        type: string
-        required: true
 
 concurrency:
-  group: publish-${{ inputs.tag }}
+  group: publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -32,30 +26,29 @@ jobs:
       - name: Validate trigger and tag
         env:
           WORKFLOW_REF: ${{ github.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          TARGET_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          expected_ref="refs/heads/$DEFAULT_BRANCH"
-          if [[ "$WORKFLOW_REF" != "$expected_ref" ]]; then
-            echo "::error::Manual PyPI publication must be dispatched from the default branch ($DEFAULT_BRANCH)."
+          if [[ "$WORKFLOW_REF" != refs/tags/v[0-9]*.[0-9]*.[0-9]* ]]; then
+            echo "::error::Production PyPI publication must be dispatched from a semantic-version tag."
             exit 1
           fi
-          if [[ ! "$TARGET_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Tag '$TARGET_TAG' has an unexpected shape."
+          target_tag="${WORKFLOW_REF#refs/tags/}"
+          if [[ ! "$target_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$target_tag' has an unexpected shape."
             exit 1
           fi
+          echo "RELEASE_TAG=$target_tag" >> "$GITHUB_ENV"
 
       - name: Check out the tag
         uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Verify tag ancestry
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -74,8 +67,6 @@ jobs:
         run: uv build
 
       - name: Verify package version
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail

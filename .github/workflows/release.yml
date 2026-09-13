@@ -9,7 +9,7 @@ on:
         default: auto
         options: [auto, major, minor, patch]
       draft:
-        description: Create a draft release and skip publishing
+        description: Create a draft GitHub Release
         type: boolean
         default: false
       force:
@@ -149,49 +149,3 @@ jobs:
             --title "${{ steps.bump.outputs.tag }}" \
             --notes-file release-notes.md \
             ${{ inputs.draft && '--draft' || '' }}
-
-  publish:
-    name: Publish to PyPI
-    needs: release
-    if: ${{ !inputs.draft }}
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/ai-guidelines
-    permissions:
-      contents: read
-      # Required for PyPI Trusted Publishing (OIDC). No API token is used.
-      id-token: write
-    steps:
-      - name: Check out the release tag
-        uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ needs.release.outputs.tag }}
-          fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
-
-      - name: Build distributions
-        run: uv build
-
-      - name: Verify package version
-        env:
-          RELEASE_TAG: ${{ needs.release.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected_version="${RELEASE_TAG#v}"
-          shopt -s nullglob
-          artifacts=(
-            dist/ai_guidelines-"$expected_version"-*.whl
-            dist/ai_guidelines-"$expected_version".tar.gz
-          )
-          if (( ${#artifacts[@]} != 2 )); then
-            echo "::error::Built package artifacts do not match $RELEASE_TAG."
-            printf '%s\n' dist/*
-            exit 1
-          fi
-
-      - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1

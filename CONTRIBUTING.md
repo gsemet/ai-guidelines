@@ -25,7 +25,8 @@ Tests must use local temporary repositories or fakes and must not require networ
 
 The version is **SCM-derived** via `hatch-vcs`. It is not written in `pyproject.toml`, in
 `__init__.py`, or in any test. Never hardcode it. Release by dispatching the `Release`
-workflow, which tags with Commitizen and publishes to PyPI through Trusted Publishing.
+workflow, which tags with Commitizen and creates the GitHub Release. Package publication
+is a separate, tag-scoped workflow.
 
 The `Release` workflow generates the GitHub Release body with the repository's
 `gh-release-notes` Copilot skill from the exact previous-release-to-target diff. It writes
@@ -40,23 +41,27 @@ required.
 
 ### PyPI Trusted Publishing
 
-Before the first release, configure a pending publisher at <https://pypi.org/manage/account/publishing/>:
+Before production publication, configure a pending publisher at
+<https://pypi.org/manage/account/publishing/>:
 
 | Field | Value |
 | --- | --- |
 | PyPI project name | `ai-guidelines` |
 | Owner | `gsemet` |
 | Repository name | `ai-guidelines` |
-| Workflow name | `release.yml` |
+| Workflow name | `publish.yml` |
 | Environment name | `pypi` |
 
-Add a second pending publisher with the same values and
-`publish.yml` as the workflow name to support manual recovery.
-The GitHub `pypi` environment already exists and is deliberately used by both workflows.
-No `PYPI_API_TOKEN` secret is required: the workflows request an OIDC token and the PyPI
-publisher configuration limits which workflow can exchange it.
+For non-production validation, configure the equivalent pending publisher at
+<https://test.pypi.org/manage/account/publishing/> with workflow `test-pypi.yml` and
+environment `testpypi`.
 
-After the Windows CI fix has reached `main`, start the first release with:
+The GitHub `pypi` and `testpypi` environments are used only by their corresponding
+publication workflows.
+No `PYPI_API_TOKEN` secret is required: the workflows request an OIDC token and the PyPI
+publisher configurations limit which workflow can exchange it.
+
+Start a release with:
 
 ```console
 gh workflow run Release --repo gsemet/ai-guidelines --ref main \
@@ -64,12 +69,17 @@ gh workflow run Release --repo gsemet/ai-guidelines --ref main \
 gh run list --repo gsemet/ai-guidelines --workflow Release --limit 1
 ```
 
-The `Release` workflow publishes the semantic-version tag it creates after the GitHub release
-is created. `Publish` is a manual recovery workflow for a previously created tag whose
-publication needs to be retried. Dispatch it from `main` and provide that exact tag:
+To validate a release without production publication, upload the existing tag to TestPyPI:
 
 ```console
-gh workflow run Publish -f tag=v1.0.0
+gh workflow run TestPyPI --repo gsemet/ai-guidelines --ref main -f tag=v1.0.0
+```
+
+To publish to production, dispatch `Publish` with the tag selected as the workflow ref.
+The workflow rejects default-branch dispatches:
+
+```console
+gh workflow run Publish --repo gsemet/ai-guidelines --ref v1.0.0
 ```
 
 ## Test layout
