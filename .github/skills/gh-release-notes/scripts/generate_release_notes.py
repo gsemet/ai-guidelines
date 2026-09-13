@@ -13,6 +13,7 @@ from pathlib import Path
 SKILL_NAME = "gh-release-notes"
 DEFAULT_OUTPUT = Path("release-notes.md")
 MAX_GIT_CONTEXT_LENGTH = 60_000
+TOKEN_ENV_VARS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 PERMITTED_HEADINGS = frozenset(
     {
         "## New Features",
@@ -241,9 +242,10 @@ def run_skill_check(repo: Path) -> None:
 
 
 def require_copilot_token() -> None:
-    """Fail early when neither supported GitHub token environment variable exists."""
-    if not (os.environ.get("COPILOT_GITHUB_TOKEN") or os.environ.get("GH_TOKEN")):
-        raise RuntimeError("Set COPILOT_GITHUB_TOKEN or GH_TOKEN before running Copilot CLI.")
+    """Fail early when no supported GitHub token environment variable exists."""
+    if not any(os.environ.get(name) for name in TOKEN_ENV_VARS):
+        names = ", ".join(TOKEN_ENV_VARS[:-1]) + f", or {TOKEN_ENV_VARS[-1]}"
+        raise RuntimeError(f"Set one of {names} before running Copilot CLI.")
 
 
 def run_copilot(repo: Path, prompt: str, model: str | None) -> None:

@@ -85,7 +85,8 @@ def test_release_workflow_generates_notes_from_the_local_tag(project_root: Path)
     assert "generate_release_notes.py" in text
     assert '--from-ref "$FROM_REF"' in text
     assert '--to-ref "$TO_REF"' in text
-    assert "COPILOT_GITHUB_TOKEN" in text
+    assert "GITHUB_TOKEN: ${{ github.token }}" in text
+    assert "copilot-requests: write" in text
     assert "actions/upload-artifact@v4" in text
 
 

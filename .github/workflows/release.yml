@@ -35,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      copilot-requests: write
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
@@ -105,7 +106,7 @@ jobs:
 
       - name: Generate release notes with Copilot
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           FROM_REF: ${{ steps.bump.outputs.previous_ref }}
           TO_REF: ${{ steps.bump.outputs.tag }}
         run: |
