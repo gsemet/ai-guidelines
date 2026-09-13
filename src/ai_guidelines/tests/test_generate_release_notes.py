@@ -30,8 +30,8 @@ def test_build_copilot_command_includes_ai_guidelines_documentation_access() -> 
 
     assert command[:3] == ["gh", "copilot", "--"]
     assert "--allow-url=https://ai-guidelines.readthedocs.io" in command
+    assert "--allow-all-tools" in command
     assert "--available-tools=read,create,edit,bash" in command
-    assert "--allow-all-tools" not in command
 
 
 def test_parser_accepts_generic_git_refs_and_maintenance_mode() -> None:
