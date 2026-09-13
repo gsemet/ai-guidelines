@@ -410,6 +410,12 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
     # An explicit file URI is unambiguous to Git on every supported platform,
     # including Windows drive-qualified paths.
     remote_repository = remote.resolve().as_uri()
+    commands: list[list[str]] = []
+
+    def recording_runner(args: Sequence[str], cwd: Path | None = None) -> str:
+        commands.append(list(args))
+        return _git(args, cwd)
+
     location = SourceLocation(
         expression=remote_repository,
         source_type="git",
@@ -420,9 +426,16 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
         canonical_source=f"{remote_repository}/guidelines",
     )
 
-    with acquire_source(location, temp_root=tmp_path / "cache") as acquired:
+    with acquire_source(
+        location,
+        runner=recording_runner,
+        temp_root=tmp_path / "cache",
+    ) as acquired:
         assert acquired.commit == expected_commit
         assert acquired.resolved_ref == "v1.0.0"
         assert acquired.path == acquired.root / "guidelines"
         assert (acquired.path / "team.guideline.md").read_text(encoding="utf-8") == "# Team\n"
         assert not (acquired.root / "not-selected.txt").exists()
+
+    clone = next(command for command in commands if command[0] == "clone")
+    assert "--filter=blob:none" not in clone
