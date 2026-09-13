@@ -76,12 +76,12 @@ def test_release_workflow_can_create_the_initial_tag(project_root: Path) -> None
     assert 'git tag "${{ steps.bump.outputs.tag }}"' in text
 
 
-def test_release_workflow_generates_notes_before_tagging(project_root: Path) -> None:
-    """Release notes use the exact range before the temporary tag exists."""
+def test_release_workflow_generates_notes_from_the_local_tag(project_root: Path) -> None:
+    """Release notes validate against the local tag before it is pushed."""
     text = (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
     notes_position = text.index("Generate release notes with Copilot")
     tag_position = text.index('git tag "${{ steps.bump.outputs.tag }}"')
-    assert notes_position < tag_position
+    assert tag_position < notes_position
     assert "generate_release_notes.py" in text
     assert '--from-ref "$FROM_REF"' in text
     assert '--to-ref "$TO_REF"' in text

@@ -97,6 +97,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Create the tag locally
+        run: |
+          # Local-only: the version is SCM-derived, so no bump commit is needed
+          # and nothing is pushed to the default branch yet.
+          git tag "${{ steps.bump.outputs.tag }}"
+
       - name: Generate release notes with Copilot
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -114,12 +120,6 @@ jobs:
         with:
           name: release-notes-${{ steps.bump.outputs.tag }}
           path: release-notes.md
-
-      - name: Create the tag locally
-        run: |
-          # Local-only: the version is SCM-derived, so no bump commit is needed
-          # and nothing is pushed to the default branch.
-          git tag "${{ steps.bump.outputs.tag }}"
 
       - name: Re-check that the release and remote tag are absent
         env:
