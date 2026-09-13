@@ -78,6 +78,10 @@ def atomic_write_text(path: Path | str, content: str) -> None:
 def advisory_lock(path: Path | str, timeout: float = 30.0) -> Iterator[None]:
     """Hold an exclusive inter-process lock for one operation.
 
+    The marker file is intentionally retained after the context exits.  The
+    operating-system lock is released with the file descriptor, while deleting
+    the pathname could let concurrent processes lock different inodes.
+
     Args:
         path: Lock-file path.
         timeout: Seconds to wait for another operation.

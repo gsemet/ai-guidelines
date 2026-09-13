@@ -79,6 +79,8 @@ def test_sync_creates_neutral_lock_and_managed_file(tmp_path: Path) -> None:
     assert result.lock_written
     assert result.lockfile.manager == "ai-guidelines"
     assert load_lockfile(project / "guidelines.lock.json").guidelines[0].is_complete()
+    assert (project / ".guidelines-operation.lock").exists()
+    assert not (project / ".ai-guidelines-operation.lock").exists()
 
 
 def test_sync_target_precedence_is_declaration_lock_default_agents_then_github(

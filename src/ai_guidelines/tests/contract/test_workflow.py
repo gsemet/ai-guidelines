@@ -21,6 +21,7 @@ def test_workflow_has_public_cross_platform_python_matrix(project_root: Path) ->
         step for step in job["steps"] if step.get("uses", "").startswith("astral-sh/setup-uv@")
     )
     assert setup_uv["with"]["python-version"] == "${{ matrix.python-version }}"
+    assert job["env"]["UV_PYTHON"] == "${{ matrix.python-version }}"
 
 
 def test_workflow_runs_the_complete_gate_and_artifact_smoke(project_root: Path) -> None:
@@ -38,6 +39,7 @@ def test_workflow_runs_the_complete_gate_and_artifact_smoke(project_root: Path) 
     for command in (
         "just ci-check",
         "uv build",
+        '--python "${{ matrix.python-version }}"',
         "uv pip install",
         "--help",
         'add "$source_path" quality',
@@ -71,3 +73,22 @@ def test_release_workflow_can_create_the_initial_tag(project_root: Path) -> None
     text = (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "No existing tag found" not in text
     assert 'git tag "${{ steps.bump.outputs.tag }}"' in text
+
+
+def test_release_workflow_generates_notes_before_tagging(project_root: Path) -> None:
+    """Release notes use unreleased commits before the temporary tag exists."""
+    text = (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    notes_position = text.index("Generate release notes from the changelog")
+    tag_position = text.index('git tag "${{ steps.bump.outputs.tag }}"')
+    assert notes_position < tag_position
+    assert "--unreleased-version" in text
+    assert "--start-rev" in text
+    assert "## Maintenance" in text
+
+
+def test_publish_workflow_supports_manual_tag_recovery(project_root: Path) -> None:
+    """An existing version tag can be republished through manual recovery."""
+    text = (project_root / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert "ref: ${{ inputs.tag }}" in text
+    assert "TARGET_TAG: ${{ inputs.tag }}" in text

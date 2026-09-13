@@ -266,6 +266,8 @@ def test_apply_uses_the_exact_reviewed_commit_successfully(tmp_path: Path) -> No
     assert result.applied and result.lock_written
     assert (project / ".github/guidelines/team.guidelines.md").read_text() == "reviewed\n"
     assert result.lockfile.guidelines[0].commit == "a" * 40
+    assert (project / ".guidelines-operation.lock").exists()
+    assert not (project / ".ai-guidelines-operation.lock").exists()
 
     def test_update_sources_use_published_cache_path_after_snapshot_move(tmp_path: Path) -> None:
         """Cached update sources remain valid after cache publication moves the checkout."""

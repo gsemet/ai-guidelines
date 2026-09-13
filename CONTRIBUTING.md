@@ -27,6 +27,40 @@ The version is **SCM-derived** via `hatch-vcs`. It is not written in `pyproject.
 `__init__.py`, or in any test. Never hardcode it. Release by dispatching the `Release`
 workflow, which tags with Commitizen and publishes to PyPI through Trusted Publishing.
 
+### PyPI Trusted Publishing
+
+Before the first release, configure a pending publisher at <https://pypi.org/manage/account/publishing/>:
+
+| Field | Value |
+| --- | --- |
+| PyPI project name | `ai-guidelines` |
+| Owner | `gsemet` |
+| Repository name | `ai-guidelines` |
+| Workflow name | `.github/workflows/release.yml` |
+| Environment name | `pypi` |
+
+Add a second pending publisher with the same values and
+`.github/workflows/publish.yml` as the workflow name to support manual recovery.
+The GitHub `pypi` environment already exists and is deliberately used by both workflows.
+No `PYPI_API_TOKEN` secret is required: the workflows request an OIDC token and the PyPI
+publisher configuration limits which workflow can exchange it.
+
+After the Windows CI fix has reached `main`, start the first release with:
+
+```console
+gh workflow run Release --repo gsemet/ai-guidelines --ref main \
+  -f increment=auto -f draft=false -f force=false
+gh run list --repo gsemet/ai-guidelines --workflow Release --limit 1
+```
+
+The `Release` workflow publishes the semantic-version tag it creates after the GitHub release
+is created. `Publish` is a manual recovery workflow for a previously created tag whose
+publication needs to be retried. Dispatch it from `main` and provide that exact tag:
+
+```console
+gh workflow run Publish -f tag=v1.0.0
+```
+
 ## Test layout
 
 Tests live in `src/ai_guidelines/tests/`, adjacent to the modules they cover, and are excluded

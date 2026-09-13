@@ -56,14 +56,9 @@ def test_target_paths_reject_posix_windows_and_symlink_escapes(tmp_path: Path) -
         resolve_target_path(tmp_path, "link/guidelines")
 
 
-def test_operation_lock_path_rejects_an_escaping_guidelines_parent(tmp_path: Path) -> None:
-    """The neutral operation lock cannot be redirected by a parent symlink."""
-    outside = tmp_path.parent / "outside-lock-parent"
-    outside.mkdir()
-    (tmp_path / ".guidelines").symlink_to(outside, target_is_directory=True)
-
-    with pytest.raises(TargetPathError, match="escape|project"):
-        operation_lock_path(tmp_path)
+def test_operation_lock_path_uses_a_project_root_dotfile(tmp_path: Path) -> None:
+    """The neutral operation lock has one stable, project-owned pathname."""
+    assert operation_lock_path(tmp_path) == tmp_path / ".guidelines-operation.lock"
 
 
 def test_target_selection_can_retain_a_matching_lock_target(tmp_path: Path) -> None:

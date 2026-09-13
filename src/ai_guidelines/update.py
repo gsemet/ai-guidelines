@@ -17,6 +17,7 @@ from ai_guidelines.locations import parse_location, with_source_path
 from ai_guidelines.lockfile import load_lockfile, save_lockfile
 from ai_guidelines.manifest import load_manifest
 from ai_guidelines.models import GuidelineDeclaration, GuidelinesLock, GuidelinesLockEntry
+from ai_guidelines.paths import operation_lock_path
 from ai_guidelines.reconcile import ReconciliationResult, reconcile_source
 from ai_guidelines.update_acquisition import acquire_update_sources
 
@@ -367,7 +368,7 @@ def apply_update_plan(
                     update={"requested_ref": planned.acquisition_revision}
                 )
             requests.append((index, declaration, location))
-    with atomic.advisory_lock(project / ".ai-guidelines-operation.lock"), ExitStack() as stack:
+    with atomic.advisory_lock(operation_lock_path(project)), ExitStack() as stack:
         acquired = acquire_update_sources(requests, fetcher=active, source_stack=stack)
         next_entries = list(existing.guidelines)
         reconciliations = []

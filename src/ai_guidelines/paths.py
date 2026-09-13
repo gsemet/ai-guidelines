@@ -208,12 +208,12 @@ def target_is_folder(target_path: Path | str, project_root: Path | str | None = 
 def operation_lock_path(project_root: Path | str) -> Path:
     """Return the neutral project operation-lock path.
 
-    The lock intentionally lives under ``.guidelines`` rather than any
-    host-specific state directory.  The parent is created by the lock
-    primitive only when a non-dry operation starts.  Like every other managed
-    path, the parent symlink chain must remain inside the project.
+    The lock intentionally uses a project-root dotfile rather than any
+    host-specific state directory.  It is a persistent marker used by the
+    operating-system lock; its presence after an operation does not mean that
+    the lock is still held.
     """
-    return resolve_target_path(project_root, ".guidelines/operation.lock")
+    return resolve_target_path(project_root, ".guidelines-operation.lock")
 
 
 resolve_guidelines_target = resolve_guideline_target
