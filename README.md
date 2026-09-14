@@ -4,6 +4,28 @@
 selected files into a project, records their source and SHA-256 hashes, and can reproduce or
 update that selection safely. It does not execute Markdown.
 
+## Guideline, instruction, and skill
+
+A **guideline** is reusable Markdown context containing rules or practices.
+It is declared in the project context (usually in `AGENTS.md`) and the
+agent idenfies when it will have to use it, especially during planning.
+
+An **instruction file** is a GitHub Copilot specific file that is loaded
+or injected by the Coding Agent according to its file-pattern rules.
+During planning, when the agent is thinking about the files to edit for instance, the coding agent does not see any file of this type opened,
+and so MAY not have loaded the relevant instruction files at this point.
+This means instructions are only good to encode some low level coding
+preference, not move elaborated preferences.
+
+A **skill** is a self-describing knowledge package that declares activation or loading behavior. A Skill can contain coding standards, and act exactely
+like guidelines, but it is good to place them in a separate location
+with a clear name.
+
+This tool only installs explicitly selected guidelines:
+Put project-owned loading rules in `AGENTS.md`, `CONSTITUTION.md`,
+or another project convention.
+
+
 ## Install
 
 ```bash
@@ -60,22 +82,3 @@ source — see [source grammar](docs/source/reference/source-grammar.md). For ho
 sources are cached, see [how caching works](docs/source/explanation/caching.md).
 
 See also [`SECURITY.md`](SECURITY.md) and the [`examples/`](examples/) directory.
-
-## Guideline, instruction, and skill
-
-A **guideline** is reusable Markdown context containing rules or practices. An **instruction
-file** is loaded or injected by an agent according to its file-pattern rules. A **skill** is a
-self-describing knowledge package that declares activation or loading behavior. This tool only
-installs explicitly selected guidelines: it does not inject instructions, activate skills, or
-decide when an agent should load a file. Put project-owned loading rules in `AGENTS.md`,
-`CONSTITUTION.md`, or another project convention.
-
-## Development
-
-Use `just install` and `just preflight`: format check, Ruff, strict mypy, pytest with a
-coverage gate, and a documentation build with warnings as errors. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-Version 1 has no importer and no migration command for lockfiles produced by other tools:
-any unrecognized lockfile format is rejected with an instruction to regenerate it. Declare
-your sources in `guidelines.yml` and run `guidelines sync`.
