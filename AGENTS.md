@@ -21,7 +21,7 @@ Read `CONSTITUTION.md` before changing the project.
 - `.github/guidelines/python-module-documentation.guidelines.md`: Writing Python module/function
   docstring and documentation
 - `.github/guidelines/python-unittest.guidelines.md`: Writing and organizing Python unit tests
-- `.github/guidelines/markdown-line-wrap.guidelines.md`: how to wrap lines in user-facing Markdown file
+- `.github/guidelines/markdown-line-wrap-by-clause.guidelines.md`: how to wrap lines in user-facing Markdown file
 
 Precedence rule:
 

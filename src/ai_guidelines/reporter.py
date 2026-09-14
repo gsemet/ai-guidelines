@@ -86,6 +86,8 @@ def print_update_plan(plan: Any) -> None:
             f"{entry.name}: {entry.group}; {entry.current_revision} -> "
             f"{entry.available_revision}; {changed} file(s)"
         )
+    if plan.lockfile_needs_rewrite:
+        console.print("Lockfile: historical entries will be consolidated.")
     if plan.dry_run:
         console.print("Dry run: no files were written.")
 

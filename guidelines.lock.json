@@ -4,54 +4,42 @@
   "lock_format": "ai-guidelines",
   "lock_format_version": 1,
   "manager_version": "0.1.0",
-  "generated_at": "2026-09-14T08:09:51Z",
+  "generated_at": "2026-09-14T12:29:58Z",
   "guidelines": [
     {
       "expression": "gsemet/ai-guidelines-registry",
       "name": "ai-guidelines-registry",
       "source": "https://github.com/gsemet/ai-guidelines-registry",
       "source_type": "github",
+      "paths": [
+        "SWE/Git/Git_Commit_Message",
+        "SWE/Python",
+        "SWE/Markdown"
+      ],
       "reference_kind": "branch",
-      "commit": "a59d831310a8de6e22155336a65bbf82b7ae9731",
-      "captured_at": "2026-09-14T07:58:55Z",
+      "commit": "0e11fc1449c1cf99091e18e5c804e79158ea5f1c",
+      "captured_at": "2026-09-14T12:29:58Z",
       "target_path": ".github/guidelines",
       "files": [
         {
           "source_path": "git-commit-message.guidelines.md",
           "target_path": ".github/guidelines/git-commit-message.guidelines.md",
-          "sha256": "cb4c0d69ceae60b2382644d50721509572c59b5fcffef2bec932375a2496f480"
+          "sha256": "b1845de3e9a205b532db208a68c59f2e6ec1579b52675ba0c2ce2824183db9c1"
         },
         {
-          "source_path": "python-unittest.guidelines.md",
-          "target_path": ".github/guidelines/python-unittest.guidelines.md",
-          "sha256": "18e02066077482759714b00fe97be51d751f7b775451ff790ef97bd842a77101"
-        }
-      ]
-    },
-    {
-      "expression": "gsemet/ai-guidelines-registry",
-      "name": "ai-guidelines-registry",
-      "source": "https://github.com/gsemet/ai-guidelines-registry",
-      "source_type": "github",
-      "reference_kind": "branch",
-      "commit": "a59d831310a8de6e22155336a65bbf82b7ae9731",
-      "captured_at": "2026-09-14T08:09:51Z",
-      "target_path": ".github/guidelines",
-      "files": [
-        {
-          "source_path": "git-commit-message.guidelines.md",
-          "target_path": ".github/guidelines/git-commit-message.guidelines.md",
-          "sha256": "cb4c0d69ceae60b2382644d50721509572c59b5fcffef2bec932375a2496f480"
+          "source_path": "Rewrap-Line-by-clause/markdown-line-wrap-by-clause.guidelines.md",
+          "target_path": ".github/guidelines/markdown-line-wrap-by-clause.guidelines.md",
+          "sha256": "b48d31c436101fbf71ff36727b07ca1c1e9d01b1bebe093d8678fe9154270094"
         },
         {
           "source_path": "Python_Module_Documentation/python-module-documentation.guidelines.md",
           "target_path": ".github/guidelines/python-module-documentation.guidelines.md",
-          "sha256": "0003f76256b53aeadc25f5187c1a2382dcae47efe4b865346535f99af2c4f86b"
+          "sha256": "3497e330e6fd221a5d88e5dbaba1a3bfc0bfa186b9c903c9330e40234800df89"
         },
         {
           "source_path": "Python_Unit_Test/python-unittest.guidelines.md",
           "target_path": ".github/guidelines/python-unittest.guidelines.md",
-          "sha256": "18e02066077482759714b00fe97be51d751f7b775451ff790ef97bd842a77101"
+          "sha256": "80da40c7a64783789135c669c061f2e92c8a2e930fcaa48de6e3b6661458c168"
         }
       ]
     }

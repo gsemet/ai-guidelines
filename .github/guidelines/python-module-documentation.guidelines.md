@@ -1,5 +1,6 @@
 ---
-name: Python Module Documentation Guideline 1.1
+name: Python Module Documentation Guideline
+version: 1.1
 description: Guidelines for writing clear, actionable documentation for Python modules using reStructuredText docstrings and Sphinx/MyST
 metadata:
   owner: Gaetan Semet <gaetan.semet@ampere.cars>
