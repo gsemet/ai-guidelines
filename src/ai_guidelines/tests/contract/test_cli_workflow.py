@@ -10,6 +10,7 @@ from ai_guidelines.cli import guidelines
 
 @contextmanager
 def _context(value):
+    """Yield a value through a context-manager-shaped test double."""
     yield value
 
 
@@ -23,6 +24,7 @@ def test_local_source_workflow_through_public_command(tmp_path: Path, monkeypatc
     runner = CliRunner()
 
     def invoke(*arguments: str):
+        """Invoke the public CLI with stable test options."""
         return runner.invoke(guidelines, list(arguments), catch_exceptions=False)
 
     monkeypatch.chdir(project)
@@ -99,7 +101,10 @@ def test_extensionless_remote_directory_update_discovers_nested_guideline(
     (selected / "git-commit-message.guidelines.md").write_text("commit\n", encoding="utf-8")
 
     class Fetcher:
+        """Return the selected nested fixture through the fetcher contract."""
+
         def acquire(self, location):
+            """Yield the deterministic nested source fixture."""
             return _context(
                 AcquiredSource(
                     location=location,

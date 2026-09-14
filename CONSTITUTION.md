@@ -63,6 +63,8 @@ private service, catalog system, or vendor-specific deployment environment.
 - Use Conventional Commits with concise, user-impact-oriented subjects.
 - Do not weaken checks to make a change pass.
 
+Follow the applicable guidelines in `.github/guidelines/`.
+
 ## Quality Gate
 
 Run the complete gate before considering a change complete:

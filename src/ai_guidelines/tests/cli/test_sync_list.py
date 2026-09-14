@@ -8,11 +8,13 @@ from ai_guidelines.cli import guidelines
 
 
 def _write(path: Path, content: str = "guide\n") -> None:
+    """Write a UTF-8 CLI fixture and create its parent directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
 
 def _project(tmp_path: Path) -> Path:
+    """Create a project with one local guideline declaration."""
     project = tmp_path / "project"
     project.mkdir()
     _write(project / "source" / "team.guidelines.md")

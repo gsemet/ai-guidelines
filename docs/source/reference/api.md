@@ -1,7 +1,7 @@
 # Python API
 
-`ai_guidelines.api` is the stable public facade. Anything not re-exported there is internal
-and may change without notice.
+`ai_guidelines.api` is the stable public facade.
+Anything not re-exported there is internal and may change without notice.
 
 ## Example
 

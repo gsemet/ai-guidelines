@@ -17,7 +17,8 @@ From the root of any project:
 $ guidelines add gsemet/ai-guidelines-registry SWE/Python/Python_Unit_Test
 ```
 
-This writes `guidelines.yml`. Nothing has been downloaded yet.
+This writes `guidelines.yml`.
+Nothing has been downloaded yet.
 
 ## 3. Inspect the manifest
 
@@ -30,9 +31,9 @@ guidelines:
       - SWE/Python/Python_Unit_Test
 ```
 
-The `owner/repository` short form is expanded to a real Git URL at resolution time. A registry
-is just a Git repository where guidelines are stored; see {doc}`../reference/source-grammar`
-for every accepted source form.
+The `owner/repository` short form is expanded to a real Git URL at resolution time.
+A registry is just a Git repository where guidelines are stored; see
+{doc}`../reference/source-grammar` for every accepted source form.
 
 ## 4. Synchronize
 
@@ -53,8 +54,9 @@ Two things happen:
 $ guidelines sync --frozen
 ```
 
-`--frozen` performs no resolution, no acquisition, and no writes. It fails if the lockfile
-is missing replay data. This is the command to use in CI.
+`--frozen` performs no resolution, no acquisition, and no writes.
+It fails if the lockfile is missing replay data.
+This is the command to use in CI.
 
 ## 6. See what changed upstream
 
@@ -63,13 +65,15 @@ $ guidelines outdated
 $ guidelines update --dry-run
 ```
 
-`outdated` is read-only. `update` reviews a plan and applies exactly the revision you
-select. Moving branches and semantic ranges may refresh; exact tags and commit SHAs never do.
+`outdated` is read-only.
+`update` reviews a plan and applies exactly the revision you select.
+Moving branches and semantic ranges may refresh; exact tags and commit SHAs never do.
 
 ## 7. Commit the result
 
-Commit `guidelines.yml`, `guidelines.lock.json`, **and** the installed files. The installed
-files are project-owned: your repository is the source of truth for what your agents read.
+Commit `guidelines.yml`, `guidelines.lock.json`, **and** the installed files.
+The installed files are project-owned: your repository is the source of truth for what your
+agents read.
 
 ## Where next
 

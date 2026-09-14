@@ -11,10 +11,17 @@ from ai_guidelines.cache import MaterializedGuidelineCache
 
 
 def _console() -> Console:
+    """Return a non-color console suitable for redirected command output."""
     return Console(force_terminal=False, color_system=None)
 
 
 def print_sync_report(result: Any) -> None:
+    """Print synchronization actions, warnings, and completion state.
+
+    Args:
+        result:
+            Synchronization result exposing a plan, warnings, and dry-run state.
+    """
     console = _console()
     console.print("Guideline synchronization")
     console.print(f"Target: {result.plan.target_path}")
@@ -43,6 +50,12 @@ def print_sync_report(result: Any) -> None:
 
 
 def print_outdated_report(report: Any) -> None:
+    """Print available revisions as a compact table.
+
+    Args:
+        report:
+            Outdated report exposing entries and an ``updates_available`` property.
+    """
     console = _console()
     table = Table(title="Guideline revisions")
     for column in ("Name", "Current", "Available", "Status"):
@@ -58,6 +71,12 @@ def print_outdated_report(report: Any) -> None:
 
 
 def print_update_plan(plan: Any) -> None:
+    """Print a reviewed update plan without applying it.
+
+    Args:
+        plan:
+            Update plan exposing entries and dry-run state.
+    """
     console = _console()
     console.print("Guideline update plan")
     console.print(f"Cache base: {MaterializedGuidelineCache().cache_dir}")
@@ -72,6 +91,12 @@ def print_update_plan(plan: Any) -> None:
 
 
 def print_update_result(result: Any) -> None:
+    """Print the number of files changed by an applied update.
+
+    Args:
+        result:
+            Update result exposing reconciliation action lists.
+    """
     changed = sum(
         len(item.added) + len(item.updated) + len(item.removed) for item in result.reconciliations
     )

@@ -35,6 +35,20 @@ def selector_sparse_patterns(declaration: GuidelineDeclaration) -> list[str]:
     file, while the other patterns support the suffixless folder convention.
     Legacy ``pattern`` declarations retain their recursive filename matching
     behavior.
+
+    Args:
+        declaration:
+            Validated declaration whose selectors should be materialized.
+
+    Returns:
+        De-duplicated sparse-checkout patterns in stable order.
+
+    Examples:
+        >>> declaration = GuidelineDeclaration(
+        ...     source="github/example/repo", paths=["python"]
+        ... )
+        >>> selector_sparse_patterns(declaration)[:2]
+        ['python', 'python/*']
     """
     if declaration.paths is not None:
         patterns: list[str] = []

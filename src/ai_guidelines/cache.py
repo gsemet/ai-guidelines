@@ -33,6 +33,7 @@ from ai_guidelines.locations import (
     SourceLocation,
     parse_location,
     validate_source_location,
+    with_source_path,
 )
 
 CACHE_TTL = timedelta(minutes=10)
@@ -98,7 +99,10 @@ class _DiscoveryPayload(BaseModel):
 
 
 class DiscoveryCache:
-    """Store short-lived source-relative discovery metadata."""
+    """Store short-lived source-relative discovery metadata.
+
+    .. versionadded:: 0.2.0
+    """
 
     def __init__(
         self,
@@ -107,6 +111,25 @@ class DiscoveryCache:
         ttl: timedelta = CACHE_TTL,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Configure a discovery cache with an injectable clock.
+
+        Args:
+            cache_dir:
+                Optional directory for discovery metadata.
+            ttl:
+                Maximum age of a discovery entry.
+            clock:
+                Optional UTC timestamp provider used by tests.
+
+        Raises:
+            ValueError:
+                If ``ttl`` is not positive.
+
+        Examples:
+            >>> cache = DiscoveryCache(ttl=timedelta(minutes=5))
+            >>> cache.ttl == timedelta(minutes=5)
+            True
+        """
         self.cache_dir = (
             Path(cache_dir).expanduser()
             if cache_dir is not None
@@ -144,8 +167,22 @@ class DiscoveryCache:
             "relative_path": parsed.relative_path,
         }
 
-    def cache_key(self, location: SourceLocation | str, revision: str | None = None) -> str:
-        """Return a deterministic SHA-256 cache identity."""
+    def cache_key(
+        self,
+        location: SourceLocation | str,
+        revision: str | None = None,
+    ) -> str:
+        """Return a deterministic SHA-256 cache identity.
+
+        Args:
+            location:
+                Local or remote source identity.
+            revision:
+                Optional revision override used in the cache identity.
+
+        Returns:
+            Lowercase SHA-256 identity text.
+        """
         encoded = json.dumps(
             self._identity(location, revision), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -153,8 +190,22 @@ class DiscoveryCache:
 
     key_for = cache_key
 
-    def cache_path(self, location: SourceLocation | str, revision: str | None = None) -> Path:
-        """Return the cache file path without creating it."""
+    def cache_path(
+        self,
+        location: SourceLocation | str,
+        revision: str | None = None,
+    ) -> Path:
+        """Return the cache file path without creating it.
+
+        Args:
+            location:
+                Source identity used to derive the cache key.
+            revision:
+                Optional revision override.
+
+        Returns:
+            The JSON metadata path for the source.
+        """
         return self.cache_dir / f"{self.cache_key(location, revision)}.json"
 
     @staticmethod
@@ -182,7 +233,28 @@ class DiscoveryCache:
         refresh: bool = False,
         bypass: bool = False,
     ) -> DiscoveryResult | None:
-        """Read a fresh entry, or return a miss for absent/corrupt state."""
+        """Read a fresh entry, or return a miss for absent or corrupt state.
+
+        Args:
+            location:
+                Source identity used to find the entry.
+            revision:
+                Optional revision override used in the cache identity.
+            root:
+                Optional acquired root used to reconstruct candidate paths.
+            refresh:
+                Remove the entry and force a miss.
+            bypass:
+                Return a miss without reading or deleting cache state.
+
+        Returns:
+            Discovery metadata, or ``None`` when the entry is unavailable.
+
+        Examples:
+            >>> cache = DiscoveryCache()
+            >>> cache.read("github/example/repo") is None
+            True
+        """
         path = self.cache_path(location, revision)
         if bypass:
             return None
@@ -232,7 +304,24 @@ class DiscoveryCache:
         *,
         revision: str | None = None,
     ) -> None:
-        """Atomically persist source-relative discovery metadata."""
+        """Atomically persist source-relative discovery metadata.
+
+        Args:
+            location:
+                Source identity represented by ``result``.
+            result:
+                Discovery metadata to serialize.
+            revision:
+                Optional revision override used in the cache identity.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     cache = DiscoveryCache(cache_dir=Path(directory))
+            ...     cache.write("github/example/repo", DiscoveryResult())
+            ...     cache.read("github/example/repo") is not None
+            True
+        """
         identity = self._identity(location, revision)
         payload = _DiscoveryPayload(
             created_at=self._now(),
@@ -279,13 +368,20 @@ class DiscoveryCache:
         with suppress(FileNotFoundError, OSError):
             path.unlink()
 
-    def clear(self, location: SourceLocation | str, revision: str | None = None) -> None:
+    def clear(
+        self,
+        location: SourceLocation | str,
+        revision: str | None = None,
+    ) -> None:
         """Remove one discovery entry."""
         self._unlink(self.cache_path(location, revision))
 
 
 class GuidelineCacheSnapshot(BaseModel):
-    """One materialized repository snapshot returned by the cache."""
+    """One materialized repository snapshot returned by the cache.
+
+    .. versionadded:: 0.2.0
+    """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True, frozen=True)
 
@@ -296,10 +392,49 @@ class GuidelineCacheSnapshot(BaseModel):
     commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     reference_kind: str | None
     paths: tuple[str, ...]
+    resolved_paths: tuple[tuple[str, str], ...] = ()
+
+    def relative_path_for(self, requested_path: str) -> str:
+        """Return the materialized path for one requested source path."""
+        normalized = "." if requested_path == "." else _safe_cached_relative_path(requested_path)
+        return dict(self.resolved_paths).get(normalized, normalized)
+
+    def path_for(self, requested_path: str) -> Path:
+        """Return a contained materialized path for one requested source path."""
+        relative_path = self.relative_path_for(requested_path)
+        candidate = (
+            self.root
+            if relative_path == "."
+            else self.root.joinpath(*PurePosixPath(relative_path).parts)
+        )
+        try:
+            if not candidate.resolve(strict=False).is_relative_to(self.root.resolve(strict=False)):
+                raise ValueError("cached source path escapes its source root")
+        except OSError:
+            raise ValueError("cached source path could not be resolved safely") from None
+        return candidate
+
+    def location_for(self, location: SourceLocation) -> SourceLocation:
+        """Return a fresh source location using the resolved cached path."""
+        path = self.path_for(location.relative_path)
+        return with_source_path(
+            location,
+            self.relative_path_for(location.relative_path),
+            kind="folder" if path.is_dir() else "file",
+        )
 
 
 class MaterializedGuidelineCache:
-    """Cache sparse repository snapshots by credential-free identity and commit."""
+    """Cache sparse repository snapshots by credential-free identity and commit.
+
+    .. versionchanged:: 0.2.0
+        Pending checkouts are promoted atomically and failed publication restores
+        the previous snapshot.
+
+    A pending checkout is promoted into its commit-addressed path only after
+    its source tree has been validated. Metadata publication is atomic, and
+    failed publication restores the previous snapshot.
+    """
 
     def __init__(
         self,
@@ -309,6 +444,27 @@ class MaterializedGuidelineCache:
         eviction_ttl: timedelta = GUIDELINE_CACHE_EVICTION_TTL,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Configure refresh, eviction, and time behavior for the cache.
+
+        Args:
+            cache_dir:
+                Optional directory for materialized snapshots and metadata.
+            refresh_ttl:
+                Maximum age for reusing a moving-reference snapshot.
+            eviction_ttl:
+                Maximum idle age before a snapshot is pruned.
+            clock:
+                Optional UTC timestamp provider used by tests.
+
+        Raises:
+            ValueError:
+                If either TTL is non-positive or eviction precedes refresh.
+
+        Examples:
+            >>> cache = MaterializedGuidelineCache(eviction_ttl=timedelta(days=2))
+            >>> cache.eviction_ttl == timedelta(days=2)
+            True
+        """
         self.cache_dir = (
             Path(cache_dir).expanduser()
             if cache_dir is not None
@@ -328,7 +484,19 @@ class MaterializedGuidelineCache:
 
     @staticmethod
     def repository_identity(location: SourceLocation) -> str:
-        """Return a credential-free host/repository identity."""
+        """Return a credential-free host/repository identity.
+
+        Args:
+            location:
+                Validated remote source location.
+
+        Returns:
+            Stable host and repository text without credentials.
+
+        Raises:
+            ValueError:
+                If the location is local or inconsistent.
+        """
         try:
             location = validate_source_location(location)
         except (TypeError, ValueError):
@@ -357,15 +525,47 @@ class MaterializedGuidelineCache:
             raise ValueError("guideline cache identity requires a full commit")
         return normalized
 
-    def cache_key(self, location: SourceLocation, commit: str) -> str:
-        """Return a readable, collision-resistant repository/commit key."""
+    def cache_key(
+        self,
+        location: SourceLocation,
+        commit: str,
+    ) -> str:
+        """Return a readable, collision-resistant repository/commit key.
+
+        Args:
+            location:
+                Remote source location.
+            commit:
+                Full 40-character hexadecimal Git commit.
+
+        Returns:
+            Credential-free cache directory name.
+
+        Raises:
+            ValueError:
+                If the location or commit is unsafe.
+        """
         identity = self.repository_identity(location)
         repository = re.sub(r"[^A-Za-z0-9._-]+", "_", identity).strip("._-")
         identity_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return f"{repository or 'repository'}__{identity_digest}__{self._normalize_commit(commit)}"
 
-    def cache_path(self, location: SourceLocation, commit: str) -> Path:
-        """Return the materialized entry path."""
+    def cache_path(
+        self,
+        location: SourceLocation,
+        commit: str,
+    ) -> Path:
+        """Return the materialized entry path.
+
+        Args:
+            location:
+                Remote source location.
+            commit:
+                Full 40-character hexadecimal Git commit.
+
+        Returns:
+            Commit-addressed snapshot directory, which is not created.
+        """
         return self.cache_dir / self.cache_key(location, commit)
 
     def checkout_path(self, location: SourceLocation) -> Path:
@@ -490,7 +690,12 @@ class MaterializedGuidelineCache:
         except OSError:
             raise ValueError("source snapshot could not be inspected safely") from None
 
-    def _cleanup_payload(self, payload: dict[str, object]) -> bool:
+    def _cleanup_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        snapshot_backups: list[tuple[Path, Path]] | None = None,
+    ) -> bool:
         """Remove metadata and snapshots older than the eviction TTL."""
         entries = self._entries(payload)
         retained: list[dict[str, object]] = []
@@ -509,7 +714,14 @@ class MaterializedGuidelineCache:
                 if isinstance(key, str):
                     path = self._entry_path(key)
                     if path is not None:
-                        self._remove(path)
+                        if snapshot_backups is None or not path.exists():
+                            self._remove(path)
+                        else:
+                            backup = self.cache_dir / (
+                                f".{path.name}.eviction-backup-{uuid.uuid4().hex}"
+                            )
+                            os.replace(path, backup)
+                            snapshot_backups.append((path, backup))
                 changed = True
             else:
                 retained.append(entry)
@@ -552,7 +764,9 @@ class MaterializedGuidelineCache:
             return removed
 
     def _snapshot_for_entry(
-        self, location: SourceLocation, entry: dict[str, object]
+        self,
+        location: SourceLocation,
+        entry: dict[str, object],
     ) -> GuidelineCacheSnapshot | None:
         """Validate one metadata entry and resolve its requested path."""
         key, repository, commit = entry.get("key"), entry.get("repository"), entry.get("commit")
@@ -568,7 +782,21 @@ class MaterializedGuidelineCache:
         try:
             normalized_commit = self._normalize_commit(commit)
             requested = location.relative_path
-            candidate = path if requested == "." else path.joinpath(*PurePosixPath(requested).parts)
+            resolved_paths: dict[str, str] = {}
+            raw_resolved_paths = entry.get("resolved_paths", {})
+            if isinstance(raw_resolved_paths, dict):
+                for raw_requested, raw_resolved in raw_resolved_paths.items():
+                    if not isinstance(raw_requested, str) or not isinstance(raw_resolved, str):
+                        continue
+                    requested_path = (
+                        "." if raw_requested == "." else _safe_cached_relative_path(raw_requested)
+                    )
+                    resolved_path = (
+                        "." if raw_resolved == "." else _safe_cached_relative_path(raw_resolved)
+                    )
+                    resolved_paths[requested_path] = resolved_path
+            resolved = resolved_paths.get(requested, requested)
+            candidate = path if resolved == "." else path.joinpath(*PurePosixPath(resolved).parts)
             if not candidate.exists() or not candidate.resolve().is_relative_to(path.resolve()):
                 return None
             raw_paths = entry.get("paths", [])
@@ -590,6 +818,7 @@ class MaterializedGuidelineCache:
                 if isinstance(reference_kind, str) and reference_kind
                 else None,
                 paths=paths,
+                resolved_paths=tuple(sorted(resolved_paths.items())),
             )
         except (FileNotFoundError, OSError, TypeError, ValueError, ValidationError):
             return None
@@ -649,7 +878,21 @@ class MaterializedGuidelineCache:
         required_paths: Sequence[str] | None,
         required_pattern: str | None,
     ) -> bool:
-        """Return whether a snapshot contains every requested selector."""
+        """Return whether a snapshot contains every requested selector.
+
+        Examples:
+            >>> cache = MaterializedGuidelineCache(cache_dir="/tmp/ai-guidelines-cache")
+            >>> location = parse_location(
+            ...     "https://example.com/team/repo#main:guidelines/"
+            ... )
+            >>> cache._snapshot_covers(
+            ...     Path("/tmp/ai-guidelines-cache/snapshot"),
+            ...     location,
+            ...     required_paths=None,
+            ...     required_pattern=None,
+            ... )
+            True
+        """
         if required_paths is None and required_pattern is None:
             return True
         selection_root = root
@@ -682,6 +925,24 @@ class MaterializedGuidelineCache:
         not refresh cache metadata or otherwise mutate the filesystem. A lookup
         with selectors also verifies that the sparse snapshot contains the
         requested guideline coverage before reusing it.
+
+        Args:
+            location:
+                Remote source location to resolve.
+            touch:
+                Update access metadata when a snapshot is reused.
+            required_paths:
+                Optional plural selectors that the snapshot must contain.
+            required_pattern:
+                Optional legacy filename pattern that the snapshot must contain.
+
+        Returns:
+            A validated snapshot, or ``None`` when no reusable state exists.
+
+        Examples:
+            >>> cache = MaterializedGuidelineCache()
+            >>> cache.lookup(parse_location("https://example.com/team/repo")) is None
+            True
         """
         if location.repository is None:
             return None
@@ -742,16 +1003,74 @@ class MaterializedGuidelineCache:
         checkout_root: Path,
         locations: Sequence[SourceLocation],
         *,
+        resolved_locations: Sequence[SourceLocation] | None = None,
         resolved_ref: str | None,
         commit: str,
         reference_kind: str | None,
     ) -> GuidelineCacheSnapshot:
-        """Atomically publish one union sparse checkout and metadata entry."""
+        """Atomically publish one union sparse checkout and metadata entry.
+
+        Args:
+            location:
+                Repository identity used for the cache key.
+            checkout_root:
+                Validated pending checkout to promote or copy.
+            locations:
+                Requested source locations represented by the checkout.
+            resolved_locations:
+                Optional locations after suffix or path resolution.
+            resolved_ref:
+                Revision selected for acquisition.
+            commit:
+                Full commit resolved by Git.
+            reference_kind:
+                Provider classification for the requested reference.
+
+        Returns:
+            The published snapshot rooted at its final cache path.
+
+        Raises:
+            OSError:
+                If filesystem or metadata publication fails.
+            ValueError:
+                If the checkout, locations, or commit is unsafe.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     root = Path(directory)
+            ...     checkout = root / "checkout"
+            ...     source = checkout / "guide.guidelines.md"
+            ...     source.parent.mkdir(parents=True)
+            ...     _ = source.write_text("guide\\n", encoding="utf-8")
+            ...     location = parse_location(
+            ...         "https://example.com/team/repo#main:guide.guidelines.md"
+            ...     )
+            ...     snapshot = MaterializedGuidelineCache(
+            ...         cache_dir=root / "cache"
+            ...     ).write_snapshot(
+            ...         location,
+            ...         checkout,
+            ...         [location],
+            ...         resolved_ref="main",
+            ...         commit="a" * 40,
+            ...         reference_kind="branch",
+            ...     )
+            ...     snapshot.path_for(location.relative_path).read_text(encoding="utf-8").strip()
+            'guide'
+        """
         try:
             location = validate_source_location(location)
             validated_locations = tuple(validate_source_location(item) for item in locations)
+            validated_resolved_locations = (
+                tuple(validate_source_location(item) for item in resolved_locations)
+                if resolved_locations is not None
+                else validated_locations
+            )
         except (TypeError, ValueError):
             raise ValueError("cache source location is unsafe or inconsistent") from None
+        if len(validated_locations) != len(validated_resolved_locations):
+            raise ValueError("cache source and resolved location counts must match")
         if location.repository is None or not checkout_root.is_dir():
             raise ValueError("guideline snapshots require a remote checkout directory")
         self._validate_snapshot_tree(checkout_root)
@@ -762,58 +1081,135 @@ class MaterializedGuidelineCache:
         cache_owned = checkout_root.parent.resolve() == self.cache_dir.resolve()
         now = self._now()
         paths = {source.relative_path for source in validated_locations}
+        backup_path: Path | None = None
+        staging_path: Path | None = None
+        eviction_backups: list[tuple[Path, Path]] = []
+        published = False
         with self._metadata_lock():
-            payload = self._load_metadata()
-            existing = next(
-                (item for item in self._entries(payload) if item.get("key") == key), None
-            )
-            if existing is not None and isinstance(existing.get("paths"), list):
-                paths.update(str(item) for item in cast(list[object], existing["paths"]))
-            if cache_owned:
-                if entry_path.exists():
-                    self._validate_snapshot_tree(entry_path)
+            try:
+                payload = self._load_metadata()
+                metadata_before = (
+                    self.metadata_path.read_bytes() if self.metadata_path.exists() else None
+                )
+                existing = next(
+                    (item for item in self._entries(payload) if item.get("key") == key), None
+                )
+                if existing is not None and isinstance(existing.get("paths"), list):
+                    paths.update(str(item) for item in cast(list[object], existing["paths"]))
+                resolved_paths: dict[str, str] = {}
+                if existing is not None and isinstance(existing.get("resolved_paths"), dict):
+                    stored_resolved_paths = cast(dict[object, object], existing["resolved_paths"])
+                    for raw_requested, raw_resolved in stored_resolved_paths.items():
+                        if isinstance(raw_requested, str) and isinstance(raw_resolved, str):
+                            try:
+                                requested_path = (
+                                    "."
+                                    if raw_requested == "."
+                                    else _safe_cached_relative_path(raw_requested)
+                                )
+                                resolved_path = (
+                                    "."
+                                    if raw_resolved == "."
+                                    else _safe_cached_relative_path(raw_resolved)
+                                )
+                            except ValueError:
+                                continue
+                            resolved_paths[requested_path] = resolved_path
+                for requested_location, resolved_location in zip(
+                    validated_locations, validated_resolved_locations, strict=True
+                ):
+                    resolved_paths[requested_location.relative_path] = (
+                        resolved_location.relative_path
+                    )
+                if cache_owned:
+                    if entry_path.exists():
+                        self._validate_snapshot_tree(entry_path)
+                        shutil.copytree(
+                            entry_path,
+                            checkout_root,
+                            dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns(".git"),
+                            symlinks=True,
+                        )
+                        backup_path = self.cache_dir / (
+                            f".{entry_path.name}.backup-{uuid.uuid4().hex}"
+                        )
+                        os.replace(entry_path, backup_path)
+                    os.replace(checkout_root, entry_path)
+                    published = True
+                else:
+                    staging_path = self.cache_dir / (
+                        f".{entry_path.name}.staging-{uuid.uuid4().hex}"
+                    )
+                    self._remove(staging_path)
+                    if entry_path.exists():
+                        self._validate_snapshot_tree(entry_path)
+                        staging_path.mkdir(parents=True, exist_ok=True)
+                        shutil.copytree(entry_path, staging_path, dirs_exist_ok=True, symlinks=True)
                     shutil.copytree(
-                        entry_path,
                         checkout_root,
+                        staging_path,
                         dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(".git"),
                         symlinks=True,
                     )
+                    self._validate_snapshot_tree(staging_path)
+                    if entry_path.exists():
+                        backup_path = self.cache_dir / (
+                            f".{entry_path.name}.backup-{uuid.uuid4().hex}"
+                        )
+                        os.replace(entry_path, backup_path)
+                    os.replace(staging_path, entry_path)
+                    staging_path = None
+                    published = True
+                entry: dict[str, object] = {
+                    "key": key,
+                    "repository": self.repository_identity(location),
+                    "requested_ref": location.requested_ref or "",
+                    "resolved_ref": resolved_ref or "",
+                    "reference_kind": reference_kind or "",
+                    "commit": normalized_commit,
+                    "created_at": now.isoformat().replace("+00:00", "Z"),
+                    "last_accessed_at": now.isoformat().replace("+00:00", "Z"),
+                    "last_refreshed_at": now.isoformat().replace("+00:00", "Z"),
+                    "paths": sorted(paths),
+                    "resolved_paths": dict(sorted(resolved_paths.items())),
+                }
+                payload["entries"] = [
+                    item for item in self._entries(payload) if item.get("key") != key
+                ] + [entry]
+                self._cleanup_payload(payload, snapshot_backups=eviction_backups)
+                self._save_metadata(payload)
+                snapshot = self._snapshot_for_entry(location, entry)
+                if snapshot is None:
+                    raise ValueError("stored guideline snapshot could not be validated")
+                if backup_path is not None:
+                    self._remove(backup_path)
+                    backup_path = None
+                for _, eviction_backup in eviction_backups:
+                    self._remove(eviction_backup)
+                return snapshot
+            except Exception as error:
+                if published:
                     self._remove(entry_path)
-                os.replace(checkout_root, entry_path)
-            else:
-                if entry_path.exists():
-                    self._validate_snapshot_tree(entry_path)
-                else:
-                    entry_path.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(
-                    checkout_root,
-                    entry_path,
-                    dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(".git"),
-                    symlinks=True,
-                )
-            entry: dict[str, object] = {
-                "key": key,
-                "repository": self.repository_identity(location),
-                "requested_ref": location.requested_ref or "",
-                "resolved_ref": resolved_ref or "",
-                "reference_kind": reference_kind or "",
-                "commit": normalized_commit,
-                "created_at": now.isoformat().replace("+00:00", "Z"),
-                "last_accessed_at": now.isoformat().replace("+00:00", "Z"),
-                "last_refreshed_at": now.isoformat().replace("+00:00", "Z"),
-                "paths": sorted(paths),
-            }
-            payload["entries"] = [
-                item for item in self._entries(payload) if item.get("key") != key
-            ] + [entry]
-            self._cleanup_payload(payload)
-            self._save_metadata(payload)
-            snapshot = self._snapshot_for_entry(location, entry)
-            if snapshot is None:
-                raise ValueError("stored guideline snapshot could not be validated")
-            return snapshot
+                if backup_path is not None and backup_path.exists():
+                    os.replace(backup_path, entry_path)
+                    backup_path = None
+                if staging_path is not None:
+                    self._remove(staging_path)
+                if cache_owned:
+                    self._remove(checkout_root)
+                for original, eviction_backup in reversed(eviction_backups):
+                    if eviction_backup.exists():
+                        os.replace(eviction_backup, original)
+                try:
+                    if metadata_before is None:
+                        self._remove(self.metadata_path)
+                    else:
+                        atomic.atomic_write(self.metadata_path, metadata_before)
+                except OSError as rollback_error:
+                    raise OSError("cache publication rollback failed") from rollback_error
+                raise error
 
     @staticmethod
     def _remove(path: Path) -> None:

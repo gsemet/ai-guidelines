@@ -28,6 +28,7 @@ def test_atomic_write_preserves_previous_bytes_when_replacement_fails(
     path.write_bytes(b"previous\n")
 
     def fail_replace(*args: object) -> None:
+        """Inject an operating-system replacement failure."""
         raise OSError("no replacement")
 
     monkeypatch.setattr("ai_guidelines.atomic.os.replace", fail_replace)

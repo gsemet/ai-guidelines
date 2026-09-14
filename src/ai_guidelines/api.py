@@ -52,24 +52,65 @@ __all__ = [
 
 
 def _cache(cache: _MaterializedGuidelineCache | None = None) -> _MaterializedGuidelineCache:
+    """Return the supplied cache service or a default user cache."""
     return cache or _MaterializedGuidelineCache()
 
 
 def cache_dir(cache: _MaterializedGuidelineCache | None = None) -> Path:
-    """Return the disposable source-cache directory."""
+    """Return the disposable source-cache directory.
+
+    .. versionadded:: 0.2.0
+
+    Args:
+        cache:
+            Optional cache service, primarily useful for tests.
+
+    Returns:
+        The directory containing materialized source snapshots.
+    """
     return _cache(cache).cache_dir
 
 
 def cache_size(cache: _MaterializedGuidelineCache | None = None) -> int:
-    """Return cache size in bytes."""
+    """Return cache size in bytes.
+
+    .. versionadded:: 0.2.0
+
+    Args:
+        cache:
+            Optional cache service, primarily useful for tests.
+
+    Returns:
+        The number of bytes occupied by snapshots and metadata.
+    """
     return _cache(cache).size()
 
 
 def cache_clean(cache: _MaterializedGuidelineCache | None = None) -> int:
-    """Remove all cache snapshots and return the number removed."""
+    """Remove all cache snapshots and return the number removed.
+
+    .. versionadded:: 0.2.0
+
+    Args:
+        cache:
+            Optional cache service, primarily useful for tests.
+
+    Returns:
+        The number of indexed snapshots removed.
+    """
     return _cache(cache).clear_all()
 
 
 def cache_prune(cache: _MaterializedGuidelineCache | None = None) -> int:
-    """Remove expired cache snapshots and return the number removed."""
+    """Remove expired cache snapshots and return the number removed.
+
+    .. versionadded:: 0.2.0
+
+    Args:
+        cache:
+            Optional cache service, primarily useful for tests.
+
+    Returns:
+        The number of snapshots removed by the eviction policy.
+    """
     return _cache(cache).cleanup()

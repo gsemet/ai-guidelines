@@ -39,7 +39,8 @@ def load_manifest(path: Path | str) -> GuidelinesManifest:
     """Load and validate a manifest.
 
     Args:
-        path: Path to ``guidelines.yml``.
+        path:
+            Path to ``guidelines.yml``.
 
     Returns:
         A scalar-normalized and project-bound manifest.
@@ -64,8 +65,10 @@ def save_manifest(path: Path | str, manifest: GuidelinesManifest) -> None:
     """Validate and atomically save a normalized manifest.
 
     Args:
-        path: Destination path for ``guidelines.yml``.
-        manifest: Manifest document to persist.
+        path:
+            Destination path for ``guidelines.yml``.
+        manifest:
+            Manifest document to persist.
 
     Raises:
         TypeError: If the document or destination type is unsupported.

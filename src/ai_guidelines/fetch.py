@@ -20,30 +20,44 @@ from ai_guidelines.locations import (
     LocationParseError,
     SourceLocation,
     parse_location,
+    replace_source_location,
     validate_revision,
     validate_source_location,
     with_source_path,
 )
+from ai_guidelines.semver import is_range, parse_version, satisfies
 
 GitRunner = Callable[[Sequence[str], Path | None], str]
 ReferenceKind = Literal["branch", "tag", "ambiguous", "commit", "unknown", "local"]
 
-_SEMVER_TAG = re.compile(
-    r"^v?(?P<major>0|[1-9]\d*)"
-    r"(?:\.(?P<minor>0|[1-9]\d*))?"
-    r"(?:\.(?P<patch>0|[1-9]\d*))?$"
-)
 _COMMIT = re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 
 class SourceFetchError(RuntimeError):
-    """Raised when a guideline source cannot be acquired safely."""
+    """Raised when a guideline source cannot be acquired safely.
+
+    .. versionchanged:: 0.2.0
+        Acquisition errors are sanitized so provider diagnostics and source
+        credentials do not escape the boundary.
+    """
 
 
 class _SourcePathNotFoundError(SourceFetchError):
     """Report a missing repository path with a safe correction hint."""
 
-    def __init__(self, location: SourceLocation, suggested_path: str | None = None) -> None:
+    def __init__(
+        self,
+        location: SourceLocation,
+        suggested_path: str | None = None,
+    ) -> None:
+        """Create a safe, repository-relative missing-path diagnostic.
+
+        Args:
+            location:
+                Requested source location whose path was not found.
+            suggested_path:
+                Optional unique repository path that may correct the request.
+        """
         message = (
             f"Guideline path '{location.relative_path}' was not found in the repository. "
             "Repository fragment paths are relative to the repository root."
@@ -69,7 +83,9 @@ def _suffix_variants(path: str) -> tuple[str, ...]:
 
 
 def _resolve_existing_source_path(
-    root: Path, location: SourceLocation, runner: GitRunner
+    root: Path,
+    location: SourceLocation,
+    runner: GitRunner,
 ) -> tuple[Path, SourceLocation]:
     """Resolve a source path while accepting either supported filename suffix."""
     requested = location.relative_path
@@ -79,13 +95,18 @@ def _resolve_existing_source_path(
         if path.exists():
             resolved = with_source_path(location, candidate) if candidate != requested else location
             if path.is_dir() and resolved.kind != "folder":
-                resolved = resolved.model_copy(update={"kind": "folder"})
+                resolved = replace_source_location(resolved, kind="folder")
             return path, resolved
     raise _SourcePathNotFoundError(location, _suggest_source_path(root, location, runner))
 
 
 class AcquiredSource(BaseModel):
-    """Materialized source returned from an acquisition context."""
+    """Materialized source returned from an acquisition context.
+
+    Remote roots are temporary unless a caller supplies a cache-owned checkout;
+    the acquisition context removes temporary roots on exit. ``commit`` is the
+    exact revision observed after checkout when Git provides one.
+    """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True, frozen=True)
 
@@ -99,9 +120,25 @@ class AcquiredSource(BaseModel):
 
 
 class SourceFetcher:
-    """Injectable acquisition facade for production code and tests."""
+    """Injectable acquisition facade for production code and tests.
 
-    def __init__(self, runner: GitRunner | None = None, temp_root: Path | None = None) -> None:
+    .. versionchanged:: 0.2.0
+        The facade supports union sparse checkouts for same-repository sources.
+    """
+
+    def __init__(
+        self,
+        runner: GitRunner | None = None,
+        temp_root: Path | None = None,
+    ) -> None:
+        """Configure Git execution and an optional temporary-root provider.
+
+        Args:
+            runner:
+                Callable used to execute Git commands.
+            temp_root:
+                Optional parent directory for pending remote checkouts.
+        """
         self.runner = runner or _run_git
         self.temp_root = temp_root
 
@@ -114,7 +151,35 @@ class SourceFetcher:
         checkout_root: Path | None = None,
         base_dir: Path | None = None,
     ) -> AbstractContextManager[AcquiredSource]:
-        """Return an acquisition context manager for one source."""
+        """Return an acquisition context manager for one source.
+
+        Args:
+            location:
+                Source location or expression to acquire.
+            sparse_pattern:
+                Optional legacy sparse-checkout pattern.
+            sparse_patterns:
+                Optional additional sparse-checkout patterns.
+            checkout_root:
+                Optional caller-owned checkout destination.
+            base_dir:
+                Base directory for relative local expressions.
+
+        Returns:
+            A context manager yielding one acquired source.
+
+        Raises:
+            SourceFetchError:
+                If parsing, validation, checkout, or source selection fails.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     source = parse_location(".", base_dir=Path(directory))
+            ...     with SourceFetcher().acquire(source) as acquired:
+            ...         acquired.location.source_type
+            'local'
+        """
         return acquire_source(
             location,
             runner=self.runner,
@@ -132,7 +197,30 @@ class SourceFetcher:
         sparse_patterns: Sequence[str] | None = None,
         checkout_root: Path | None = None,
     ) -> AbstractContextManager[list[AcquiredSource]]:
-        """Acquire same-repository locations in one sparse checkout."""
+        """Acquire same-repository locations in one sparse checkout.
+
+        Args:
+            locations:
+                Remote locations sharing one repository and revision.
+            sparse_patterns:
+                Optional additional sparse-checkout patterns.
+            checkout_root:
+                Optional caller-owned checkout destination.
+
+        Returns:
+            A context manager yielding sources mapped to their requested paths.
+
+        Raises:
+            ValueError:
+                If locations mix repositories, revisions, or local sources.
+            SourceFetchError:
+                If checkout or source selection fails.
+
+        Examples:
+            >>> with SourceFetcher().acquire_many([]) as acquired:
+            ...     acquired
+            []
+        """
         return _acquire_many(
             locations,
             runner=self.runner,
@@ -259,7 +347,11 @@ def _local_git_commit(path: Path, runner: GitRunner) -> str | None:
     return commit if _COMMIT.fullmatch(commit) else None
 
 
-def _suggest_source_path(root: Path, location: SourceLocation, runner: GitRunner) -> str | None:
+def _suggest_source_path(
+    root: Path,
+    location: SourceLocation,
+    runner: GitRunner,
+) -> str | None:
     """Find one repository path containing the requested suffix."""
     try:
         output = runner(["ls-tree", "-r", "--name-only", "HEAD"], root)
@@ -289,77 +381,27 @@ def _suggest_source_path(root: Path, location: SourceLocation, runner: GitRunner
 
 def _is_semver_constraint(value: str | None) -> bool:
     """Return whether a revision is a supported range expression."""
-    return (
-        value is not None
-        and bool(value)
-        and (
-            any(value.startswith(operator) for operator in (">", "<", "=", "~", "^"))
-            or "*" in value
-        )
-    )
+    return is_range(value)
 
 
 def _version_tuple(tag: str) -> tuple[int, int, int] | None:
     """Parse a simple semantic-version tag."""
-    match = _SEMVER_TAG.fullmatch(tag.strip())
-    if match is None:
-        return None
-    return (
-        int(match.group("major")),
-        int(match.group("minor") or 0),
-        int(match.group("patch") or 0),
-    )
-
-
-def _matches_constraint(
-    version: tuple[int, int, int], target: tuple[int, int, int], operator: str
-) -> bool:
-    """Compare one version against one semver operator."""
-    if operator == "^":
-        if target[0] > 0:
-            upper_bound = (target[0] + 1, 0, 0)
-        elif target[1] > 0:
-            upper_bound = (target[0], target[1] + 1, 0)
-        else:
-            upper_bound = (target[0], target[1], target[2] + 1)
-        return target <= version < upper_bound
-    comparisons = {
-        ">=": version >= target,
-        "<=": version <= target,
-        ">": version > target,
-        "<": version < target,
-        "~": version >= target and version[:2] == target[:2],
-        "=": version == target,
-    }
-    return comparisons.get(operator, False)
+    return parse_version(tag)
 
 
 def _satisfies(version: tuple[int, int, int], constraint: str) -> bool:
     """Evaluate common comma-separated semver comparisons."""
-    for expression in (part.strip() for part in constraint.split(",")):
-        if not expression:
-            continue
-        operator = "="
-        for candidate in (">=", "<=", ">", "<", "^", "~", "="):
-            if expression.startswith(candidate):
-                operator = candidate
-                expression = expression[len(candidate) :].strip()
-                break
-        if expression.endswith(".*"):
-            try:
-                prefix = tuple(int(part) for part in expression[:-2].split("."))
-            except ValueError:
-                return False
-            if version[: len(prefix)] != prefix:
-                return False
-            continue
-        target = _version_tuple(expression)
-        if target is None or not _matches_constraint(version, target, operator):
-            return False
-    return True
+    try:
+        return satisfies(version, constraint)
+    except ValueError:
+        return False
 
 
-def _resolve_semver_tag(repository: str, constraint: str, runner: GitRunner) -> str:
+def _resolve_semver_tag(
+    repository: str,
+    constraint: str,
+    runner: GitRunner,
+) -> str:
     """Resolve the highest matching semantic-version tag from Git metadata."""
     output = runner(["ls-remote", "--tags", repository], None)
     candidates: list[tuple[tuple[int, int, int], str]] = []
@@ -373,7 +415,11 @@ def _resolve_semver_tag(repository: str, constraint: str, runner: GitRunner) -> 
     return max(candidates)[1]
 
 
-def _classify_remote_reference(repository: str, reference: str, runner: GitRunner) -> ReferenceKind:
+def _classify_remote_reference(
+    repository: str,
+    reference: str,
+    runner: GitRunner,
+) -> ReferenceKind:
     """Classify an exact ref using provider metadata rather than its spelling."""
     if _COMMIT.fullmatch(reference):
         return "commit"
@@ -479,7 +525,44 @@ def acquire_source(
     sparse_patterns: Sequence[str] | None = None,
     checkout_root: Path | None = None,
 ) -> Iterator[AcquiredSource]:
-    """Materialize one local or remote source for a bounded context."""
+    """Materialize one local or remote source for a bounded context.
+
+    .. versionchanged:: 0.2.0
+        Remote acquisition uses sparse checkout and removes pending roots after
+        the context closes.
+
+    Args:
+        location:
+            Source location or expression to acquire.
+        runner:
+            Optional Git command runner.
+        temp_root:
+            Optional parent directory for temporary checkouts.
+        base_dir:
+            Base directory for relative local expressions.
+        sparse_pattern:
+            Optional legacy sparse-checkout pattern.
+        sparse_patterns:
+            Optional additional sparse-checkout patterns.
+        checkout_root:
+            Optional checkout destination used by cache promotion.
+
+    Yields:
+        An acquired source whose root and selected path remain valid during
+        the context.
+
+    Raises:
+        SourceFetchError:
+            If the source cannot be validated, acquired, or selected.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     source = parse_location(".", base_dir=Path(directory))
+        ...     with acquire_source(source) as acquired:
+        ...         acquired.location.source_type
+        'local'
+    """
     sparse_pattern, sparse_patterns = _validate_sparse_patterns(sparse_pattern, sparse_patterns)
     if isinstance(location, str):
         parsed = parse_location(location, base_dir=base_dir)
@@ -522,15 +605,18 @@ def acquire_source(
     except (OSError, RuntimeError, TypeError, ValueError):
         _remove_checkout(root)
         raise SourceFetchError("could not acquire the requested guideline source") from None
-    yield AcquiredSource(
-        location=parsed,
-        root=root,
-        path=source_path,
-        resolved_ref=resolved_ref,
-        commit=commit,
-        reference_kind=reference_kind,
-        temporary=False,
-    )
+    try:
+        yield AcquiredSource(
+            location=parsed,
+            root=root,
+            path=source_path,
+            resolved_ref=resolved_ref,
+            commit=commit,
+            reference_kind=reference_kind,
+            temporary=True,
+        )
+    finally:
+        _remove_checkout(root)
 
 
 fetch_source = acquire_source
@@ -579,8 +665,11 @@ def _acquire_many(
         raise ValueError("shared acquisition requires one repository and revision")
     if first.repository is None:
         raise ValueError("shared acquisition requires a repository")
-    root_location = first.model_copy(
-        update={"relative_path": ".", "kind": "folder", "canonical_source": first.repository}
+    root_location = replace_source_location(
+        first,
+        relative_path=".",
+        kind="folder",
+        canonical_source=first.repository,
     )
     patterns = [
         pattern

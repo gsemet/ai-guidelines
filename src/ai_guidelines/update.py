@@ -3,22 +3,25 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from contextlib import ExitStack
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn, SupportsIndex
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_guidelines import atomic
 from ai_guidelines.discovery import discover_guidelines
 from ai_guidelines.fetch import ReferenceKind, SourceFetcher
-from ai_guidelines.locations import parse_location, with_source_path
+from ai_guidelines.identity import DeclarationIdentity, manifest_fingerprint
+from ai_guidelines.locations import replace_source_location
+from ai_guidelines.lock_entries import build_lock_entry
 from ai_guidelines.lockfile import load_lockfile, save_lockfile
 from ai_guidelines.manifest import load_manifest
 from ai_guidelines.models import GuidelineDeclaration, GuidelinesLock, GuidelinesLockEntry
-from ai_guidelines.paths import operation_lock_path
-from ai_guidelines.reconcile import ReconciliationResult, reconcile_source
+from ai_guidelines.paths import declaration_location, operation_lock_path, select_guideline_target
+from ai_guidelines.reconcile import ReconciliationJournal, ReconciliationResult, reconcile_source
+from ai_guidelines.semver import is_range
 from ai_guidelines.update_acquisition import acquire_update_sources
 
 _SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -27,11 +30,95 @@ _MOVING = (">", "<", "=", "~", "^")
 
 
 class GuidelineUpdateError(RuntimeError):
-    """Raised when an update cannot be safely inspected or applied."""
+    """Raised when an update cannot be safely inspected or applied.
+
+    .. versionchanged:: 0.2.0
+        Applying a plan now rejects changed declaration identity, lock state,
+        resolution, or source type before publication.
+    """
+
+
+class _FrozenList(list[Any]):
+    """List-compatible container that rejects mutation after plan creation."""
+
+    def _reject(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> NoReturn:
+        """Reject an operation that would mutate a reviewed plan."""
+        raise TypeError("reviewed update plans are immutable")
+
+    append = _reject
+    clear = _reject
+    extend = _reject
+    insert = _reject
+    pop = _reject
+    remove = _reject
+    reverse = _reject
+    sort = _reject
+
+    def __delitem__(self, _key: object) -> NoReturn:
+        """Reject deletion from the frozen list."""
+        self._reject()
+
+    def __iadd__(self, _value: Iterable[Any]) -> list[Any]:  # type: ignore[override, misc]
+        """Reject in-place list concatenation."""
+        self._reject()
+
+    def __imul__(self, _value: SupportsIndex) -> list[Any]:  # type: ignore[override]
+        """Reject in-place list repetition."""
+        self._reject()
+
+    def __setitem__(
+        self,
+        _key: object,
+        _value: object,
+    ) -> NoReturn:
+        """Reject item replacement in the frozen list."""
+        self._reject()
+
+
+class _FrozenDict(dict[str, Any]):
+    """Dict-compatible container that rejects mutation after plan creation."""
+
+    def _reject(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> NoReturn:
+        """Reject an operation that would mutate a reviewed plan."""
+        raise TypeError("reviewed update plans are immutable")
+
+    clear = _reject
+    pop = _reject
+    popitem = _reject
+    setdefault = _reject
+    update = _reject
+
+    def __delitem__(self, _key: object) -> NoReturn:
+        """Reject deletion from the frozen dictionary."""
+        self._reject()
+
+    def __ior__(self, _value: Any, /) -> _FrozenDict:  # type: ignore[override, misc]
+        """Reject in-place dictionary merging."""
+        self._reject()
+
+    def __setitem__(
+        self,
+        _key: object,
+        _value: object,
+    ) -> NoReturn:
+        """Reject item replacement in the frozen dictionary."""
+        self._reject()
 
 
 class OutdatedEntry(BaseModel):
-    """Revision state for one declaration."""
+    """Revision state for one declaration.
+
+    The status distinguishes moving sources, exact pins, local sources, and
+    declarations that have not yet been locked.
+    """
 
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1)
@@ -42,6 +129,7 @@ class OutdatedEntry(BaseModel):
 
     @property
     def update_available(self) -> bool:
+        """Return whether acquisition found a newer source revision."""
         return self.status == "outdated"
 
 
@@ -54,13 +142,18 @@ class OutdatedReport(BaseModel):
 
     @property
     def updates_available(self) -> list[OutdatedEntry]:
+        """Return only entries whose moving source has changed."""
         return [entry for entry in self.entries if entry.update_available]
 
 
 class UpdatePlanEntry(BaseModel):
-    """One source and its file-level update actions."""
+    """One source and its file-level update actions.
 
-    model_config = ConfigDict(extra="forbid")
+    The entry captures the exact acquisition revision and declaration identity
+    that a later application must verify.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
     name: str = Field(min_length=1)
     source: str = Field(min_length=1)
     current_revision: str = "—"
@@ -74,13 +167,28 @@ class UpdatePlanEntry(BaseModel):
     files: int = 0
     actions: dict[str, list[str]] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    declaration_fingerprint: str = ""
+
+    @field_validator("actions", mode="after")
+    @classmethod
+    def freeze_actions(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Freeze nested action paths without changing their list API."""
+        return _FrozenDict({name: _FrozenList(paths) for name, paths in value.items()})
+
+    @field_validator("warnings", mode="after")
+    @classmethod
+    def freeze_warnings(cls, value: list[str]) -> list[str]:
+        """Freeze nested plan warnings without changing their list API."""
+        return _FrozenList(value)
 
     @property
     def group(self) -> str:
+        """Return the report group used for a plan entry."""
         return "unchanged" if self.status == "pinned" else self.status
 
     @property
     def acquisition_revision(self) -> str | None:
+        """Return the strongest exact revision available for acquisition."""
         return (
             self.commit
             or self.resolved_ref
@@ -89,15 +197,33 @@ class UpdatePlanEntry(BaseModel):
 
 
 class UpdatePlan(BaseModel):
-    """Complete no-write update plan."""
+    """Complete no-write update plan.
 
-    model_config = ConfigDict(extra="forbid")
+    .. versionchanged:: 0.2.0
+        Reviewed plans are immutable and bind declaration, manifest, and lock
+        fingerprints before application.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
     entries: list[UpdatePlanEntry] = Field(default_factory=list)
+    manifest_fingerprint: str = ""
     # Planning always performs a dry run: no project or cache state is written.
     dry_run: bool = True
 
+    @field_validator("entries", mode="after")
+    @classmethod
+    def freeze_entries(cls, value: list[UpdatePlanEntry]) -> list[UpdatePlanEntry]:
+        """Freeze the ordered plan entries at the review boundary."""
+        return _FrozenList(value)
+
+    @property
+    def fingerprint(self) -> str:
+        """Return the reviewed manifest/declaration/lock fingerprint."""
+        return self.manifest_fingerprint
+
     @property
     def groups(self) -> dict[str, list[UpdatePlanEntry]]:
+        """Return entries grouped into added, updated, removed, and unchanged."""
         groups: dict[str, list[UpdatePlanEntry]] = {
             name: [] for name in ("added", "updated", "removed", "unchanged")
         }
@@ -107,10 +233,12 @@ class UpdatePlan(BaseModel):
 
     @property
     def action_counts(self) -> dict[str, int]:
+        """Return counts of source-level entries in each plan group."""
         return {name: len(entries) for name, entries in self.groups.items()}
 
     @property
     def file_action_counts(self) -> dict[str, int]:
+        """Return counts of file-level actions across all plan entries."""
         counts = dict.fromkeys(("added", "updated", "removed", "unchanged"), 0)
         for entry in self.entries:
             for action, paths in entry.actions.items():
@@ -120,6 +248,7 @@ class UpdatePlan(BaseModel):
 
     @property
     def has_changes(self) -> bool:
+        """Return whether applying the plan would change project files."""
         return any(self.groups[name] for name in ("added", "updated", "removed"))
 
 
@@ -142,6 +271,8 @@ def is_moving_reference(
     """Classify a reference, preferring provider evidence over its spelling."""
     if reference_kind == "local":
         return True
+    if reference is not None and is_range(reference):
+        return True
     if reference_kind in {"tag", "commit", "ambiguous", "unknown"}:
         return False
     if reference_kind == "branch":
@@ -153,12 +284,16 @@ def is_moving_reference(
 
 
 def _revision(entry: GuidelinesLockEntry | None) -> str:
+    """Return the display revision for a lock entry."""
     return "—" if entry is None else (entry.commit or entry.resolved_ref or "—")
 
 
 def _inputs(
-    project: Path, declarations: list[GuidelineDeclaration] | None, lockfile: GuidelinesLock | None
+    project: Path,
+    declarations: list[GuidelineDeclaration] | None,
+    lockfile: GuidelinesLock | None,
 ) -> tuple[list[GuidelineDeclaration], GuidelinesLock, str | None]:
+    """Load or normalize declarations, lock state, and the default target."""
     default = None
     if declarations is None:
         manifest = load_manifest(project / "guidelines.yml")
@@ -175,8 +310,8 @@ def _inputs(
 
 
 def _location(declaration: GuidelineDeclaration, project: Path) -> Any:
-    location = parse_location(declaration.source, ref=declaration.ref, base_dir=project)
-    return with_source_path(location, declaration.path) if declaration.path else location
+    """Resolve a declaration into its provider-neutral source location."""
+    return declaration_location(declaration, project)
 
 
 def _discovery_paths(declaration: GuidelineDeclaration) -> list[str] | None:
@@ -190,19 +325,35 @@ def _target(
     previous: GuidelinesLockEntry | None,
     default: str | None,
 ) -> str:
-    from ai_guidelines.paths import resolve_guideline_target, resolve_target_path
-
-    configured = (
-        declaration.normalized_target_path
-        or (previous.normalized_target_path if previous else None)
-        or default
-    )
-    target = (
-        resolve_guideline_target(project)
-        if configured is None
-        else resolve_target_path(project, configured)
+    """Resolve and normalize the effective target directory for a declaration."""
+    target = select_guideline_target(
+        project,
+        declaration=declaration,
+        lock_entry=previous,
+        default_target_path=default,
     )
     return target.relative_to(project).as_posix()
+
+
+def _identities(
+    project: Path,
+    declarations: list[GuidelineDeclaration],
+    lockfile: GuidelinesLock,
+    default: str | None,
+) -> list[DeclarationIdentity]:
+    """Build ordered declaration identities with effective targets."""
+    identities: list[DeclarationIdentity] = []
+    for declaration in declarations:
+        location = _location(declaration, project)
+        previous = lockfile.find_entry(declaration, base_dir=project)
+        identities.append(
+            DeclarationIdentity.from_declaration(
+                declaration,
+                location,
+                target_path=_target(project, declaration, previous, default),
+            )
+        )
+    return identities
 
 
 def inspect_outdated(
@@ -212,7 +363,38 @@ def inspect_outdated(
     lockfile: GuidelinesLock | None = None,
     fetcher: Any | None = None,
 ) -> OutdatedReport:
-    """Inspect revisions without writing the project or cache."""
+    """Inspect revisions without writing the project or cache.
+
+    .. versionchanged:: 0.2.0
+        Reports distinguish provider-resolved revisions from current lock state.
+
+    Args:
+        project_root:
+            Project containing the manifest and optional lockfile.
+        declarations:
+            Optional declarations to inspect instead of loading the manifest.
+        lockfile:
+            Optional lock state to inspect instead of loading the lockfile.
+        fetcher:
+            Optional injectable acquisition facade for tests or offline use.
+
+    Returns:
+        A report describing current and available revisions.
+
+    Raises:
+        GuidelineUpdateError:
+            If an update source cannot be inspected safely.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     project = Path(directory)
+        ...     _ = (project / "guidelines.yml").write_text(
+        ...         "guidelines: []\\n", encoding="utf-8"
+        ...     )
+        ...     inspect_outdated(project).entries
+        []
+    """
     project = Path(project_root).expanduser().resolve()
     declarations, lock, _ = _inputs(project, declarations, lockfile)
     active = fetcher or SourceFetcher()
@@ -272,13 +454,45 @@ def build_update_plan(
     lockfile: GuidelinesLock | None = None,
     fetcher: Any | None = None,
 ) -> UpdatePlan:
-    """Build all source and file actions without mutation."""
+    """Build all source and file actions without mutation.
+
+    .. versionchanged:: 0.2.0
+        The plan is immutable and binds declaration, manifest, and lock fingerprints.
+
+    Args:
+        project_root:
+            Project containing the manifest and optional lockfile.
+        declarations:
+            Optional declarations to plan instead of loading the manifest.
+        lockfile:
+            Optional lock state to plan against instead of loading the lockfile.
+        fetcher:
+            Optional injectable acquisition facade for tests or offline use.
+
+    Returns:
+        An immutable plan bound to the current manifest and lock state.
+
+    Raises:
+        GuidelineUpdateError:
+            If a source cannot be inspected or its actions cannot be planned.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     project = Path(directory)
+        ...     _ = (project / "guidelines.yml").write_text(
+        ...         "guidelines: []\\n", encoding="utf-8"
+        ...     )
+        ...     build_update_plan(project).entries
+        []
+    """
     project = Path(project_root).expanduser().resolve()
     declarations, lock, default = _inputs(project, declarations, lockfile)
     active = fetcher or SourceFetcher()
     requests: list[tuple[int, GuidelineDeclaration, Any]] = []
     contexts: dict[int, tuple[Any, Any, Any, str]] = {}
     entries: dict[int, UpdatePlanEntry] = {}
+    identities = _identities(project, declarations, lock, default)
     for index, declaration in enumerate(declarations):
         location, previous = (
             _location(declaration, project),
@@ -300,6 +514,7 @@ def build_update_plan(
                 reference_kind=previous.reference_kind,
                 status="pinned",
                 target_path=target,
+                declaration_fingerprint=identities[index].fingerprint,
             )
         else:
             requests.append((index, declaration, location))
@@ -345,80 +560,164 @@ def build_update_plan(
                 files=len(discovered.files),
                 actions=reconciliation.actions,
                 warnings=discovered.warnings + reconciliation.warnings,
+                declaration_fingerprint=identities[index].fingerprint,
             )
-    return UpdatePlan(entries=[entries[index] for index in range(len(declarations))])
+    ordered_entries = [entries[index] for index in range(len(declarations))]
+    return UpdatePlan(
+        entries=ordered_entries,
+        manifest_fingerprint=manifest_fingerprint(identities, lock),
+    )
 
 
 def apply_update_plan(
-    project_root: Path | str, plan: UpdatePlan, *, fetcher: Any | None = None
+    project_root: Path | str,
+    plan: UpdatePlan,
+    *,
+    fetcher: Any | None = None,
 ) -> GuidelineUpdateResult:
-    """Apply exactly the immutable revisions recorded in a reviewed plan."""
+    """Apply exactly the immutable revisions recorded in a reviewed plan.
+
+    .. versionchanged:: 0.2.0
+        Application rejects stale reviewed plans and verifies the reviewed
+        resolution before writing files or lock state.
+
+    Args:
+        project_root:
+            Project containing the manifest and managed guideline targets.
+        plan:
+            Reviewed immutable plan produced by :func:`build_update_plan`.
+        fetcher:
+            Optional injectable acquisition facade for tests or offline use.
+
+    Returns:
+        The applied plan, resulting lockfile, and reconciliation actions.
+
+    Raises:
+        GuidelineUpdateError:
+            If the plan is stale or acquisition resolves a different source.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     project = Path(directory)
+        ...     _ = (project / "guidelines.yml").write_text(
+        ...         "guidelines: []\\n", encoding="utf-8"
+        ...     )
+        ...     plan = build_update_plan(project)
+        ...     apply_update_plan(project, plan).applied
+        False
+    """
     project = Path(project_root).expanduser().resolve()
-    declarations, existing, default = _inputs(project, None, None)
-    if not plan.has_changes:
-        return GuidelineUpdateResult(plan=plan, lockfile=existing)
     active = fetcher or SourceFetcher()
-    requests = []
-    for index, declaration in enumerate(declarations):
-        planned = plan.entries[index]
-        if planned.group != "unchanged":
-            location = _location(declaration, project)
-            if planned.acquisition_revision:
-                location = location.model_copy(
-                    update={"requested_ref": planned.acquisition_revision}
-                )
-            requests.append((index, declaration, location))
-    with atomic.advisory_lock(operation_lock_path(project)), ExitStack() as stack:
-        acquired = acquire_update_sources(requests, fetcher=active, source_stack=stack)
-        next_entries = list(existing.guidelines)
-        reconciliations = []
-        for index, declaration, location in requests:
-            planned, source = plan.entries[index], acquired[index]
-            requested_ref = declaration.requested_ref
-            reviewed_resolution = planned.commit or planned.resolved_ref
-            actual_resolution = source.commit or source.resolved_ref
-            if reviewed_resolution is not None and actual_resolution != reviewed_resolution:
+    journal = ReconciliationJournal(project)
+    try:
+        with atomic.advisory_lock(operation_lock_path(project)), ExitStack() as stack:
+            declarations, existing, default = _inputs(project, None, None)
+            identities = _identities(project, declarations, existing, default)
+            current_fingerprint = manifest_fingerprint(identities, existing)
+            if not plan.manifest_fingerprint or plan.manifest_fingerprint != current_fingerprint:
                 raise GuidelineUpdateError(
-                    f"Guideline source {planned.name} changed after planning; rerun the update"
+                    "reviewed update plan is stale; the manifest or lockfile "
+                    "changed; rerun the update"
                 )
-            previous = existing.find_entry(declaration, base_dir=project)
-            discovered = discover_guidelines(
-                source,
-                pattern=declaration.pattern,
-                paths=_discovery_paths(declaration),
+            if len(plan.entries) != len(declarations):
+                raise GuidelineUpdateError(
+                    "reviewed update plan is stale; declaration count changed; rerun the update"
+                )
+            planned_locations: dict[int, Any] = {}
+            for index, declaration in enumerate(declarations):
+                planned = plan.entries[index]
+                if (
+                    planned.declaration_fingerprint
+                    and planned.declaration_fingerprint != identities[index].fingerprint
+                ):
+                    raise GuidelineUpdateError(
+                        f"reviewed update plan is stale for declaration {index + 1}; "
+                        "rerun the update"
+                    )
+                location = _location(declaration, project)
+                previous = existing.find_entry(declaration, base_dir=project)
+                target = _target(project, declaration, previous, default)
+                if planned.source != location.canonical_source or planned.target_path != target:
+                    raise GuidelineUpdateError(
+                        f"reviewed update plan targets a different declaration {index + 1}; "
+                        "rerun the update"
+                    )
+                planned_locations[index] = location
+            if not plan.has_changes:
+                return GuidelineUpdateResult(plan=plan, lockfile=existing)
+            requests = []
+            for index, declaration in enumerate(declarations):
+                planned = plan.entries[index]
+                if planned.group != "unchanged":
+                    location = planned_locations[index]
+                    if planned.acquisition_revision:
+                        location = replace_source_location(
+                            location,
+                            requested_ref=planned.acquisition_revision,
+                        )
+                    requests.append((index, declaration, location))
+            journal.capture([project / "guidelines.lock.json"])
+            acquired = acquire_update_sources(requests, fetcher=active, source_stack=stack)
+            current_declarations, current_existing, current_default = _inputs(project, None, None)
+            current_identities = _identities(
+                project, current_declarations, current_existing, current_default
             )
-            target = _target(project, declaration, previous, default)
-            result = reconcile_source(
-                project,
-                source,
-                discovered.files,
-                previous,
-                declaration=declaration if previous else None,
-                base_dir=project,
-                target_path=target,
-                operation_lock_held=True,
-            )
-            reconciliations.append(result)
-            entry = GuidelinesLockEntry(
-                expression=declaration.source,
-                name=declaration.alias or location.display_name,
-                source=location.canonical_source,
-                source_type=location.source_type,
-                requested_ref=requested_ref,
-                resolved_ref=source.resolved_ref
-                or ("working-tree" if location.source_type == "local" else None),
-                reference_kind=source.reference_kind,
-                commit=source.commit,
-                target_path=target,
-                captured_at=datetime.now(timezone.utc),
-                files=result.managed_files,
-            )
-            if previous:
-                next_entries = [entry if item is previous else item for item in next_entries]
-            else:
-                next_entries.append(entry)
-        next_lock = GuidelinesLock(guidelines=next_entries)
-        save_lockfile(project / "guidelines.lock.json", next_lock)
+            if manifest_fingerprint(current_identities, current_existing) != current_fingerprint:
+                raise GuidelineUpdateError(
+                    "reviewed update plan became stale during acquisition; rerun the update"
+                )
+            next_entries = list(existing.guidelines)
+            reconciliations = []
+            for index, declaration, _source_location in requests:
+                planned, source = plan.entries[index], acquired[index]
+                reviewed_resolution = planned.commit or planned.resolved_ref
+                actual_resolution = source.commit or source.resolved_ref
+                if reviewed_resolution is not None and actual_resolution != reviewed_resolution:
+                    raise GuidelineUpdateError(
+                        f"Guideline source {planned.name} changed after planning; rerun the update"
+                    )
+                if source.location.source_type != planned_locations[index].source_type:
+                    raise GuidelineUpdateError(
+                        f"Guideline source {planned.name} changed after planning; rerun the update"
+                    )
+                previous = existing.find_entry(declaration, base_dir=project)
+                discovered = discover_guidelines(
+                    source,
+                    pattern=declaration.pattern,
+                    paths=_discovery_paths(declaration),
+                )
+                target = _target(project, declaration, previous, default)
+                result = reconcile_source(
+                    project,
+                    source,
+                    discovered.files,
+                    previous,
+                    declaration=declaration if previous else None,
+                    base_dir=project,
+                    target_path=target,
+                    operation_lock_held=True,
+                    journal=journal,
+                )
+                reconciliations.append(result)
+                entry = build_lock_entry(
+                    declaration,
+                    planned_locations[index],
+                    source,
+                    managed_files=result.managed_files,
+                    target_path=target,
+                    previous=previous,
+                )
+                if previous:
+                    next_entries = [entry if item is previous else item for item in next_entries]
+                else:
+                    next_entries.append(entry)
+            next_lock = GuidelinesLock(guidelines=next_entries)
+            save_lockfile(project / "guidelines.lock.json", next_lock)
+        journal.commit()
+    except Exception:
+        journal.rollback()
+        raise
     return GuidelineUpdateResult(
         plan=plan,
         lockfile=next_lock,

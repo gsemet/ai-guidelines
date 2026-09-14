@@ -85,8 +85,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_git_context(repo: Path, from_ref: str, to_ref: str) -> str:
-    """Collect generic Git evidence for Copilot environments without Git access."""
+def build_git_context(
+    repo: Path,
+    from_ref: str,
+    to_ref: str,
+) -> str:
+    """Collect generic Git evidence for Copilot environments without Git access.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     repository = Path(directory)
+        ...     _ = run_git(repository, "init", "-q")
+        ...     _ = run_git(
+        ...         repository,
+        ...         "-c", "user.name=Example",
+        ...         "-c", "user.email=example@example.com",
+        ...         "commit", "--allow-empty", "-q", "-m", "initial",
+        ...     )
+        ...     "Precomputed Git evidence" in build_git_context(
+        ...         repository, "HEAD", "HEAD"
+        ...     )
+        True
+    """
     log = git_output(
         repo, "commit log", "log", "--format=%h %s", "--no-merges", f"{from_ref}..{to_ref}"
     )
@@ -117,7 +139,16 @@ def build_prompt(
     output: Path,
     git_context: str | None = None,
 ) -> str:
-    """Build the small orchestration prompt; the skill owns release-note policy."""
+    """Build the small orchestration prompt; the skill owns release-note policy.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> prompt = build_prompt(
+        ...     "v1.0.0", "v1.1.0", Path("/tmp/repo"), Path("/tmp/repo/release-notes.md")
+        ... )
+        >>> "v1.0.0..v1.1.0" in prompt
+        True
+    """
     try:
         output_reference = output.relative_to(repo).as_posix()
     except ValueError:
@@ -187,8 +218,24 @@ def run_git(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def git_output(repo: Path, description: str, *arguments: str) -> str:
-    """Run Git and return its output, raising one consistent error on failure."""
+def git_output(
+    repo: Path,
+    description: str,
+    *arguments: str,
+) -> str:
+    """Run Git and return its output, raising one consistent error on failure.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     repository = Path(directory)
+        ...     _ = run_git(repository, "init", "-q")
+        ...     Path(
+        ...         git_output(repository, "repository root", "rev-parse", "--show-toplevel")
+        ...     ) == repository.resolve()
+        True
+    """
     result = run_git(repo, *arguments)
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown Git error"
@@ -196,8 +243,32 @@ def git_output(repo: Path, description: str, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def validate_range(repo: Path, from_ref: str, to_ref: str) -> None:
-    """Verify that the requested refs exist and form an ancestor range."""
+def validate_range(
+    repo: Path,
+    from_ref: str,
+    to_ref: str,
+) -> None:
+    """Verify that the requested refs exist and form an ancestor range.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     repository = Path(directory)
+        ...     _ = run_git(repository, "init", "-q")
+        ...     commit_options = (
+        ...         "-c", "user.name=Example", "-c", "user.email=example@example.com"
+        ...     )
+        ...     _ = run_git(
+        ...         repository, *commit_options, "commit", "--allow-empty", "-q", "-m", "first"
+        ...     )
+        ...     first = git_output(repository, "first commit", "rev-parse", "HEAD")
+        ...     _ = run_git(
+        ...         repository, *commit_options, "commit", "--allow-empty", "-q", "-m", "second"
+        ...     )
+        ...     second = git_output(repository, "second commit", "rev-parse", "HEAD")
+        ...     validate_range(repository, first, second)
+    """
     if from_ref == to_ref:
         raise ValueError("--from-ref and --to-ref must be different refs.")
 
@@ -212,8 +283,29 @@ def validate_range(repo: Path, from_ref: str, to_ref: str) -> None:
         raise ValueError(f"Git ref {from_ref!r} is not an ancestor of {to_ref!r}.")
 
 
-def range_has_commits(repo: Path, from_ref: str, to_ref: str) -> bool:
-    """Return whether the requested Git range contains at least one commit."""
+def range_has_commits(
+    repo: Path,
+    from_ref: str,
+    to_ref: str,
+) -> bool:
+    """Return whether the requested Git range contains at least one commit.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     repository = Path(directory)
+        ...     _ = run_git(repository, "init", "-q")
+        ...     _ = run_git(
+        ...         repository,
+        ...         "-c", "user.name=Example",
+        ...         "-c", "user.email=example@example.com",
+        ...         "commit", "--allow-empty", "-q", "-m", "initial",
+        ...     )
+        ...     head = git_output(repository, "head", "rev-parse", "HEAD")
+        ...     range_has_commits(repository, head, head)
+        False
+    """
     count = git_output(repo, "commit count", "rev-list", "--count", f"{from_ref}..{to_ref}")
     return count != "0"
 
@@ -246,8 +338,22 @@ def require_copilot_token() -> None:
         raise RuntimeError(f"Set one of {names} before running Copilot CLI.")
 
 
-def run_copilot(repo: Path, prompt: str, model: str | None) -> None:
-    """Run Copilot CLI and leave the generated Markdown in the shared output file."""
+def run_copilot(
+    repo: Path,
+    prompt: str,
+    model: str | None,
+) -> None:
+    """Run Copilot CLI and leave the generated Markdown in the shared output file.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from unittest.mock import patch
+        >>> with patch(
+        ...     "subprocess.run",
+        ...     return_value=subprocess.CompletedProcess([], 0, "", ""),
+        ... ):
+        ...     run_copilot(Path.cwd(), "example prompt", None)
+    """
     result = subprocess.run(
         build_copilot_command(prompt, model),
         cwd=repo,
@@ -305,7 +411,27 @@ def generate_release_notes(
     model: str | None,
     maintenance_only: bool = False,
 ) -> None:
-    """Generate release notes, then validate the resulting Markdown file."""
+    """Generate release notes, then validate the resulting Markdown file.
+
+    Examples:
+        >>> from contextlib import redirect_stdout
+        >>> from io import StringIO
+        >>> from pathlib import Path
+        >>> from tempfile import TemporaryDirectory
+        >>> from unittest.mock import patch
+        >>> with TemporaryDirectory() as directory:
+        ...     repository = Path(directory)
+        ...     output = repository / "release-notes.md"
+        ...     captured = StringIO()
+        ...     with patch.object(sys.modules[__name__], "validate_range"):
+        ...         with patch.object(
+        ...             sys.modules[__name__], "range_has_commits", return_value=False
+        ...         ):
+        ...             with redirect_stdout(captured):
+        ...                 generate_release_notes(repository, "from", "to", output, None)
+        ...     output.read_text(encoding="utf-8").startswith("## Maintenance")
+        True
+    """
     repo = repo.resolve()
     output = resolve_path(output, repo).resolve()
     validate_range(repo, from_ref, to_ref)

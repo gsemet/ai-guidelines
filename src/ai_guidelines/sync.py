@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,7 +20,8 @@ import ai_guidelines.atomic as atomic
 from ai_guidelines.cache import MaterializedGuidelineCache
 from ai_guidelines.discovery import DiscoveryResult, discover_guidelines
 from ai_guidelines.fetch import AcquiredSource, SourceFetcher, _SourcePathNotFoundError
-from ai_guidelines.locations import SourceLocation, parse_location, with_source_path
+from ai_guidelines.locations import SourceLocation
+from ai_guidelines.lock_entries import build_lock_entry
 from ai_guidelines.lockfile import load_lockfile, save_lockfile
 from ai_guidelines.manifest import load_manifest
 from ai_guidelines.models import (
@@ -31,26 +31,45 @@ from ai_guidelines.models import (
     ReferenceKind,
 )
 from ai_guidelines.paths import (
+    declaration_location,
     operation_lock_path,
     resolve_guideline_target,
-    resolve_target_path,
+    select_guideline_target,
 )
-from ai_guidelines.reconcile import ReconciliationResult, build_destination_map, reconcile_source
+from ai_guidelines.reconcile import (
+    ReconciliationJournal,
+    ReconciliationResult,
+    build_destination_map,
+    reconcile_source,
+)
 from ai_guidelines.sparse import selector_sparse_patterns
 
 _COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 
 class SyncError(RuntimeError):
-    """Raised when manifest synchronization cannot complete safely."""
+    """Raised when manifest synchronization cannot complete safely.
+
+    .. versionchanged:: 0.2.0
+        Source-boundary failures are reported without retaining provider
+        diagnostics or credentials.
+    """
 
 
 class FrozenSyncError(SyncError):
-    """Raised when strict frozen replay state is incomplete or unavailable."""
+    """Raised when strict frozen replay state is incomplete or unavailable.
+
+    Frozen mode requires exact lock provenance, an available materialized
+    snapshot, and matching source hashes before it can plan any project state.
+    """
 
 
 class SyncPlanEntry(BaseModel):
-    """Describe one source operation and its project-relative file actions."""
+    """Describe one source operation and its project-relative file actions.
+
+    The entry is presentation-neutral so CLI and API callers can render the
+    same plan without rerunning acquisition or discovery.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -65,7 +84,11 @@ class SyncPlanEntry(BaseModel):
 
 
 class SyncPlan(BaseModel):
-    """Validated synchronization plan shared by execution and reporting."""
+    """Validated synchronization plan shared by execution and reporting.
+
+    ``dry_run`` describes the requested operation. Frozen execution also avoids
+    writes, but retains its strict replay meaning in the surrounding result.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -87,7 +110,11 @@ class SyncPlan(BaseModel):
 
 
 class GuidelinesSyncResult(BaseModel):
-    """Result of one synchronization, including prospective lock state."""
+    """Result of one synchronization, including prospective lock state.
+
+    ``lockfile`` is the in-memory next state even when ``dry_run`` or frozen
+    mode prevents publication to disk.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -146,13 +173,6 @@ class _SynchronizationArtifacts:
     plan_entries: list[SyncPlanEntry]
     warnings: list[str]
     resolved_entries: list[GuidelinesLockEntry]
-
-
-def _is_semver_constraint(value: str | None) -> bool:
-    """Return whether a requested reference is a semantic-version constraint."""
-    if value is None:
-        return False
-    return bool(value) and (value.startswith((">", "<", "=", "~", "^")) or "*" in value)
 
 
 def _locked_revision(entry: GuidelinesLockEntry) -> str | None:
@@ -274,15 +294,11 @@ def _effective_target_path(
     default_target_path: str | None = None,
 ) -> str:
     """Resolve target precedence while retaining a matching lock pin."""
-    configured = declaration.normalized_target_path
-    if configured is None and previous is not None:
-        configured = previous.normalized_target_path
-    if configured is None:
-        configured = default_target_path
-    target = (
-        resolve_guideline_target(project_root)
-        if configured is None
-        else resolve_target_path(project_root, configured)
+    target = select_guideline_target(
+        project_root,
+        declaration=declaration,
+        lock_entry=previous,
+        default_target_path=default_target_path,
     )
     return target.relative_to(project_root).as_posix()
 
@@ -297,35 +313,14 @@ def _new_lock_entry(
     target_path: str,
 ) -> GuidelinesLockEntry:
     """Create or refresh one lock entry after successful file planning."""
-    if previous is not None:
-        return previous.model_copy(
-            update={"target_path": target_path, "files": reconciliation.managed_files}
-        )
-    requested_ref = location.requested_ref
-    resolved_ref = acquired.resolved_ref
-    if location.source_type == "local" and resolved_ref is None:
-        resolved_ref = "working-tree"
-    captured_at = datetime.now(timezone.utc)
-    semver = _is_semver_constraint(requested_ref)
-    return GuidelinesLockEntry(
-        expression=declaration.source,
-        name=declaration.alias or location.display_name,
-        source=location.canonical_source,
-        source_type=location.source_type,
-        requested_ref=requested_ref,
-        path=declaration.path,
-        paths=declaration.paths,
-        resolved_ref=resolved_ref,
-        reference_kind=acquired.reference_kind,
-        commit=acquired.commit,
-        captured_at=captured_at,
-        semver_constraint=requested_ref if semver else None,
-        resolved_tag=resolved_ref if semver else None,
-        resolution_timestamp=captured_at if semver else None,
-        pattern=declaration.pattern,
+    return build_lock_entry(
+        declaration,
+        location,
+        acquired,
+        reconciliation.managed_files,
         target_path=target_path,
-        alias=declaration.alias,
-        files=reconciliation.managed_files,
+        previous=previous,
+        preserve_previous_provenance=previous is not None,
     )
 
 
@@ -349,19 +344,6 @@ def _plan_entry(
         actions=reconciliation.actions,
         warnings=list(reconciliation.warnings),
     )
-
-
-def _materialized_path(root: Path, relative_path: str) -> Path:
-    """Return a source path below a materialized snapshot root."""
-    return root if relative_path == "." else root.joinpath(*relative_path.split("/"))
-
-
-def _materialized_location(location: SourceLocation, root: Path) -> tuple[SourceLocation, Path]:
-    """Resolve an extensionless cached path as a directory when appropriate."""
-    path = _materialized_path(root, location.relative_path)
-    if path.is_dir() and location.kind != "folder":
-        location = location.model_copy(update={"kind": "folder"})
-    return location, path
 
 
 def _collect_source_contexts(
@@ -398,9 +380,11 @@ def _collect_source_contexts(
             requested_ref = (
                 _locked_revision(previous) if locked and previous is not None else declaration.ref
             )
-            location = parse_location(declaration.source, ref=requested_ref, base_dir=project)
-            if declaration.path is not None:
-                location = with_source_path(location, declaration.path)
+            location = declaration_location(
+                declaration,
+                project,
+                requested_ref=requested_ref,
+            )
             target_path = _effective_target_path(
                 project,
                 declaration,
@@ -415,12 +399,12 @@ def _collect_source_contexts(
                 required_pattern=declaration.pattern,
             )
             if cached is not None:
-                cached_location, cached_path = _materialized_location(location, cached.root)
+                cached_location = cached.location_for(location)
                 contexts[index] = (cached_location, previous, locked, target_path)
                 acquired_sources[index] = AcquiredSource(
                     location=cached_location,
                     root=cached.root,
-                    path=cached_path,
+                    path=cached.path_for(location.relative_path),
                     resolved_ref=cached.resolved_ref,
                     commit=cached.commit,
                     reference_kind=_reference_kind(cached.reference_kind),
@@ -482,6 +466,7 @@ def _acquire_pending_sources(
                     locations[0],
                     first_acquired.root,
                     locations,
+                    resolved_locations=[item.location for item in acquired_batch],
                     resolved_ref=first_acquired.resolved_ref,
                     commit=first_acquired.commit,
                     reference_kind=first_acquired.reference_kind,
@@ -489,9 +474,9 @@ def _acquire_pending_sources(
                 for item, acquired_item in zip(group, acquired_batch, strict=True):
                     location = item[2]
                     acquired_sources[item[0]] = AcquiredSource(
-                        location=location,
+                        location=snapshot.location_for(location),
                         root=snapshot.root,
-                        path=_materialized_path(snapshot.root, location.relative_path),
+                        path=snapshot.path_for(location.relative_path),
                         resolved_ref=snapshot.resolved_ref,
                         commit=snapshot.commit,
                         reference_kind=acquired_item.reference_kind,
@@ -574,9 +559,11 @@ def _prepare_frozen_sources(
             raise FrozenSyncError("Frozen synchronization failed: declaration has no lock entry")
         requested_ref = _locked_revision(previous)
         try:
-            location = parse_location(declaration.source, ref=requested_ref, base_dir=project)
-            if declaration.path is not None:
-                location = with_source_path(location, declaration.path)
+            location = declaration_location(
+                declaration,
+                project,
+                requested_ref=requested_ref,
+            )
             target_path = _effective_target_path(
                 project,
                 declaration,
@@ -618,9 +605,9 @@ def _prepare_frozen_sources(
                         f"{declaration.display_name!r} is unavailable"
                     )
                 acquired = AcquiredSource(
-                    location=location,
+                    location=cached.location_for(location),
                     root=cached.root,
-                    path=_materialized_path(cached.root, location.relative_path),
+                    path=cached.path_for(location.relative_path),
                     resolved_ref=cached.resolved_ref,
                     commit=cached.commit,
                     reference_kind=_reference_kind(cached.reference_kind),
@@ -665,6 +652,7 @@ def _reconcile_prepared_sources(
     destination_map: Any,
     *,
     dry_run: bool,
+    journal: ReconciliationJournal | None = None,
 ) -> _SynchronizationArtifacts:
     """Reconcile prepared batches and collect report and lock entries."""
     reconciliations: list[ReconciliationResult] = []
@@ -684,6 +672,7 @@ def _reconcile_prepared_sources(
                 dry_run=dry_run,
                 operation_lock_held=not dry_run,
                 destination_map=destination_map.for_batch(batch_index),
+                journal=journal,
             )
             reconciliation.warnings = list(
                 dict.fromkeys([*prepared.discovered.warnings, *reconciliation.warnings])
@@ -726,6 +715,7 @@ def _synchronize_sources(
     use_cache_checkout: bool,
     dry_run: bool,
     frozen: bool,
+    journal: ReconciliationJournal | None = None,
 ) -> _SynchronizationArtifacts:
     """Prepare, preflight, and reconcile every declaration."""
     materialized_cache = MaterializedGuidelineCache()
@@ -764,6 +754,7 @@ def _synchronize_sources(
         prepared_sources,
         destination_map,
         dry_run=dry_run or frozen,
+        journal=journal,
     )
 
 
@@ -775,8 +766,15 @@ def sync_manifest(
     frozen: bool = False,
     dry_run: bool = False,
     fetcher: Any | None = None,
+    operation_lock_held: bool = False,
 ) -> GuidelinesSyncResult:
     """Synchronize project guideline declarations at reproducible revisions.
+
+    .. versionchanged:: 0.2.0
+        Frozen mode is exact, resolution-free, acquisition-free, and write-free;
+        ordinary synchronization publishes the lock only after reconciliation.
+        Callers that already hold the project operation lock can set
+        ``operation_lock_held`` to coordinate manifest and lock publication.
 
     Args:
         project_root:
@@ -792,6 +790,8 @@ def sync_manifest(
             Preview source and file actions without writing project state.
         fetcher:
             Optional injectable acquisition facade for offline tests.
+        operation_lock_held:
+            Whether the caller already holds the project operation lock.
 
     Returns:
         A synchronization result containing actions, warnings, and lock state.
@@ -803,6 +803,16 @@ def sync_manifest(
             If strict replay state is missing or unavailable.
         SyncError:
             If acquisition, discovery, reconciliation, or publication fails.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     project = Path(directory)
+        ...     _ = (project / "guidelines.yml").write_text(
+        ...         "guidelines: []\\n", encoding="utf-8"
+        ...     )
+        ...     result = sync_manifest(project, dry_run=True)
+        ...     assert result.total_files == 0
     """
     project = Path(project_root).expanduser().resolve()
     manifest_file = Path(manifest_path) if manifest_path is not None else project / "guidelines.yml"
@@ -811,46 +821,59 @@ def sync_manifest(
     )
     active_fetcher = fetcher or SourceFetcher()
     operation_context = (
-        nullcontext() if dry_run or frozen else atomic.advisory_lock(operation_lock_path(project))
+        nullcontext()
+        if dry_run or frozen or operation_lock_held
+        else atomic.advisory_lock(operation_lock_path(project))
     )
-    with operation_context:
-        manifest = load_manifest(manifest_file)
-        existing_lock = _load_existing_lock(lock_file)
-        if frozen:
-            _validate_frozen_state(manifest, existing_lock, project)
-        with ExitStack() as source_stack:
-            artifacts = _synchronize_sources(
-                project,
-                manifest,
-                existing_lock,
-                source_stack,
-                active_fetcher=active_fetcher,
-                use_cache_checkout=fetcher is None,
-                dry_run=dry_run,
-                frozen=frozen,
+    journal = None if dry_run or frozen else ReconciliationJournal(project)
+    try:
+        with operation_context:
+            manifest = load_manifest(manifest_file)
+            existing_lock = _load_existing_lock(lock_file)
+            if journal is not None:
+                journal.capture([lock_file])
+            if frozen:
+                _validate_frozen_state(manifest, existing_lock, project)
+            with ExitStack() as source_stack:
+                artifacts = _synchronize_sources(
+                    project,
+                    manifest,
+                    existing_lock,
+                    source_stack,
+                    active_fetcher=active_fetcher,
+                    use_cache_checkout=fetcher is None,
+                    dry_run=dry_run,
+                    frozen=frozen,
+                    journal=journal,
+                )
+            target = (
+                artifacts.plan_entries[0].target_path
+                if artifacts.plan_entries
+                else resolve_guideline_target(project).relative_to(project).as_posix()
             )
-        target = (
-            artifacts.plan_entries[0].target_path
-            if artifacts.plan_entries
-            else resolve_guideline_target(project).relative_to(project).as_posix()
-        )
-        next_lock = GuidelinesLock(guidelines=artifacts.resolved_entries)
-        plan = SyncPlan(
-            target_path=target,
-            lock_path=str(lock_file),
-            entries=artifacts.plan_entries,
-            warnings=list(dict.fromkeys(artifacts.warnings)),
-            dry_run=dry_run,
-        )
-        lock_written = False
-        if not dry_run and not frozen:
-            try:
-                save_lockfile(lock_file, next_lock)
-            except (OSError, ValueError):
-                raise SyncError(
-                    "Could not publish guideline lockfile; managed files may already have changed"
-                ) from None
-            lock_written = True
+            next_lock = GuidelinesLock(guidelines=artifacts.resolved_entries)
+            plan = SyncPlan(
+                target_path=target,
+                lock_path=str(lock_file),
+                entries=artifacts.plan_entries,
+                warnings=list(dict.fromkeys(artifacts.warnings)),
+                dry_run=dry_run,
+            )
+            lock_written = False
+            if not dry_run and not frozen:
+                try:
+                    save_lockfile(lock_file, next_lock)
+                except (OSError, ValueError):
+                    raise SyncError(
+                        "Could not publish guideline lockfile; synchronized files were rolled back"
+                    ) from None
+                lock_written = True
+        if journal is not None:
+            journal.commit()
+    except Exception:
+        if journal is not None:
+            journal.rollback()
+        raise
     return GuidelinesSyncResult(
         plan=plan,
         lockfile=next_lock,

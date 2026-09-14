@@ -20,9 +20,11 @@ from ai_guidelines.locations import SourceLocation, parse_location
 
 
 def test_remote_folder_uses_argument_arrays_and_sparse_checkout(tmp_path: Path) -> None:
+    """Use argument arrays and sparse checkout for a remote folder."""
     commands: list[tuple[list[str], Path | None]] = []
 
     def runner(args: Sequence[str], cwd: Path | None = None) -> str:
+        """Record simulated Git commands and materialize the selected folder."""
         command = list(args)
         commands.append((command, cwd))
         if command[:2] == ["ls-remote", "--heads"]:
@@ -54,9 +56,11 @@ def test_remote_folder_uses_argument_arrays_and_sparse_checkout(tmp_path: Path) 
 
 
 def test_locked_revision_is_checked_out_before_return(tmp_path: Path) -> None:
+    """Check out an explicitly requested revision before yielding the source."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record Git commands for the locked-revision fixture."""
         command = list(args)
         commands.append(command)
         if command[0] == "clone":
@@ -74,9 +78,11 @@ def test_locked_revision_is_checked_out_before_return(tmp_path: Path) -> None:
 
 
 def test_batch_acquisition_unions_sparse_paths_and_clones_once(tmp_path: Path) -> None:
+    """Union selectors for one repository and clone it only once."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record batch Git commands and create both selected files."""
         command = list(args)
         commands.append(command)
         if command[0] == "clone":
@@ -108,9 +114,11 @@ def test_batch_acquisition_unions_sparse_paths_and_clones_once(tmp_path: Path) -
 
 
 def test_semver_range_resolves_highest_matching_tag(tmp_path: Path) -> None:
+    """Resolve a semantic-version range to its highest matching tag."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record tag resolution and clone the selected guideline."""
         command = list(args)
         commands.append(command)
         if command[:2] == ["ls-remote", "--tags"]:
@@ -133,7 +141,10 @@ def test_semver_range_resolves_highest_matching_tag(tmp_path: Path) -> None:
 
 
 def test_zero_major_caret_range_stays_within_minor_version(tmp_path: Path) -> None:
+    """Keep a zero-major caret range within its minor version."""
+
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Return tags and checkout commands for a zero-major range."""
         command = list(args)
         if command[:2] == ["ls-remote", "--tags"]:
             return "a\trefs/tags/v0.2.0\nb\trefs/tags/v0.2.9\nc\trefs/tags/v0.3.0\n"
@@ -151,6 +162,7 @@ def test_zero_major_caret_range_stays_within_minor_version(tmp_path: Path) -> No
 
 
 def test_local_source_uses_the_same_contract(tmp_path: Path) -> None:
+    """Expose local sources through the same acquisition contract as remotes."""
     folder = tmp_path / "local-guidelines"
     folder.mkdir()
     location = parse_location(str(folder))
@@ -163,12 +175,14 @@ def test_local_source_uses_the_same_contract(tmp_path: Path) -> None:
 
 
 def test_local_git_source_reports_head(tmp_path: Path) -> None:
+    """Report the HEAD revision when a local source is a Git checkout."""
     folder = tmp_path / "local-guidelines"
     folder.mkdir()
     location = parse_location(str(folder))
     commands: list[tuple[list[str], Path | None]] = []
 
     def runner(args: Sequence[str], cwd: Path | None = None) -> str:
+        """Return a deterministic local HEAD revision."""
         commands.append((list(args), cwd))
         return "c" * 40
 
@@ -179,7 +193,10 @@ def test_local_git_source_reports_head(tmp_path: Path) -> None:
 
 
 def test_remote_failure_hides_diagnostics_and_cleans_checkout(tmp_path: Path) -> None:
+    """Sanitize remote errors and remove the temporary checkout."""
+
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Raise a provider error containing a secret test token."""
         raise RuntimeError("fatal: token=super-secret-value")
 
     location = parse_location("https://example.com/team/repo#main:guidelines/")
@@ -196,7 +213,10 @@ def test_remote_failure_hides_diagnostics_and_cleans_checkout(tmp_path: Path) ->
 
 
 def test_remote_failure_traceback_does_not_retain_provider_exception(tmp_path: Path) -> None:
+    """Suppress provider exception details from the public traceback."""
+
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Raise a provider error containing a secret test token."""
         raise RuntimeError("fatal: token=super-secret-value")
 
     location = parse_location("https://example.com/team/repo#main:guidelines/")
@@ -214,7 +234,10 @@ def test_remote_failure_traceback_does_not_retain_provider_exception(tmp_path: P
 
 
 def test_missing_remote_path_has_actionable_safe_suggestion(tmp_path: Path) -> None:
+    """Report a safe suggested location when a remote path is missing."""
+
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Simulate a checkout whose available path differs from the request."""
         command = list(args)
         if command[0] == "clone":
             checkout = Path(command[-1])
@@ -242,6 +265,7 @@ def test_extensionless_remote_path_resolves_guideline_suffix(tmp_path: Path) -> 
     """An extensionless remote file path resolves a plural guideline file."""
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Materialize the plural-suffix file selected by an extensionless path."""
         command = list(args)
         if command[0] == "clone":
             checkout = Path(command[-1])
@@ -262,6 +286,7 @@ def test_extensionless_remote_directory_resolves_nested_guideline_file(tmp_path:
     """An extensionless directory selector discovers nested guideline files."""
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Materialize a nested guideline below the extensionless directory."""
         command = list(args)
         if command[0] == "clone":
             checkout = Path(command[-1])
@@ -280,9 +305,11 @@ def test_extensionless_remote_directory_resolves_nested_guideline_file(tmp_path:
 
 
 def test_unsafe_revision_never_reaches_git_runner(tmp_path: Path) -> None:
+    """Reject option-like revisions before invoking Git."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record any Git invocation for the safety assertion."""
         commands.append(list(args))
         return ""
 
@@ -298,9 +325,11 @@ def test_unsafe_revision_never_reaches_git_runner(tmp_path: Path) -> None:
 
 
 def test_tampered_source_location_is_rejected_before_git_runner(tmp_path: Path) -> None:
+    """Reject a tampered source path before invoking Git."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record any Git invocation for the safety assertion."""
         commands.append(list(args))
         return ""
 
@@ -316,9 +345,11 @@ def test_tampered_source_location_is_rejected_before_git_runner(tmp_path: Path) 
 
 
 def test_inconsistent_remote_location_is_rejected_before_git_runner(tmp_path: Path) -> None:
+    """Reject inconsistent remote identity fields before invoking Git."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record any Git invocation for the safety assertion."""
         commands.append(list(args))
         return ""
 
@@ -334,6 +365,7 @@ def test_inconsistent_remote_location_is_rejected_before_git_runner(tmp_path: Pa
 
 
 def test_inconsistent_local_location_is_rejected_before_access(tmp_path: Path) -> None:
+    """Reject inconsistent local identity fields before filesystem access."""
     source = tmp_path / "source"
     source.mkdir()
     other = tmp_path / "other"
@@ -346,9 +378,11 @@ def test_inconsistent_local_location_is_rejected_before_access(tmp_path: Path) -
 
 
 def test_unsafe_sparse_patterns_never_reach_git_runner(tmp_path: Path) -> None:
+    """Reject unsafe sparse patterns before invoking Git."""
     commands: list[list[str]] = []
 
     def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Record any Git invocation for the safety assertion."""
         commands.append(list(args))
         return ""
 
@@ -378,6 +412,7 @@ def test_unsafe_sparse_patterns_never_reach_git_runner(tmp_path: Path) -> None:
 
 
 def _git(args: Sequence[str], cwd: Path | None = None) -> str:
+    """Run a Git command for the local remote integration fixture."""
     completed = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -391,6 +426,7 @@ def _git(args: Sequence[str], cwd: Path | None = None) -> str:
 def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
     tmp_path: Path,
 ) -> None:
+    """Materialize the exact commit selected from a local Git remote."""
     working = tmp_path / "working"
     working.mkdir()
     _git(["init", "--initial-branch=main"], cwd=working)
@@ -413,6 +449,7 @@ def test_remote_acquisition_materializes_exact_commit_from_local_git_remote(
     commands: list[list[str]] = []
 
     def recording_runner(args: Sequence[str], cwd: Path | None = None) -> str:
+        """Record and execute Git commands for the local remote fixture."""
         commands.append(list(args))
         try:
             return _git(args, cwd)

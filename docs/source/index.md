@@ -1,10 +1,10 @@
 # ai-guidelines
 
-`ai-guidelines` manages reusable Markdown guidelines for a project. It copies explicitly
-selected files into a project, records their source and SHA-256 hashes, and can reproduce or
-update that selection safely.
+`ai-guidelines` manages reusable Markdown guidelines for a project.
+It copies explicitly selected files into a project, records their source and SHA-256 hashes,
+and can reproduce or update that selection safely.
 
-It does not execute Markdown, inject instructions, or activate skills.
+It does not execute Markdown; it does not inject instructions; it does not activate skills.
 
 ::::{grid} 1 1 2 2
 :gutter: 3

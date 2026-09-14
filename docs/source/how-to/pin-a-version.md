@@ -8,8 +8,8 @@
 $ guidelines list
 ```
 
-Look at `reference_kind` in `guidelines.lock.json`. If it is `branch` or `ambiguous`, the
-declaration is *moving*.
+Look at `reference_kind` in `guidelines.lock.json`.
+If it is `branch` or `ambiguous`, the declaration is *moving*.
 
 ## Pin to a tag
 
@@ -27,7 +27,8 @@ An exact tag never refreshes on `guidelines update`.
 
 ## Pin to a commit
 
-Maximum strictness. Immune even to a moved tag.
+Maximum strictness.
+Immune even to a moved tag.
 
 ```yaml
 guidelines:
@@ -39,9 +40,9 @@ Accepted as 7 to 64 hexadecimal characters.
 
 ## Accept a semantic version range
 
-When you want patch and minor fixes but not breaking changes, `ref` accepts a semantic
-version range. The tool resolves it against the tags in the source repository and picks the
-highest match.
+When you want patch and minor fixes but not breaking changes, `ref` accepts a semantic version
+range.
+The tool resolves it against the tags in the source repository and picks the highest match.
 
 ```yaml
 guidelines:
@@ -58,8 +59,10 @@ guidelines:
     ref: ">=1.2.0 <2.0.0"
 ```
 
-A range is a *moving* reference by design: `guidelines update` will refresh it when a new
-matching tag appears. That is the point. What it will not do is cross the bound you declared.
+A range is a *moving* reference by design: `guidelines update` will refresh it when a new matching
+tag appears.
+That is the point.
+What it will not do is cross the bound you declared.
 
 :::{note}
 Ranges only work if the source repository actually publishes tags. Against a registry with no
@@ -93,5 +96,6 @@ declaration.
 $ guidelines sync --frozen
 ```
 
-`--frozen` performs no resolution, no acquisition, and no writes. It fails if replay data is
-missing — so it fails loudly if someone edits `guidelines.yml` without regenerating the lock.
+`--frozen` performs no resolution, no acquisition, and no writes.
+It fails if replay data is missing (so it fails loudly if someone edits `guidelines.yml` without
+regenerating the lock).
