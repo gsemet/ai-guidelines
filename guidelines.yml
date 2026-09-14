@@ -2,5 +2,6 @@ version: 1
 guidelines:
   - source: gsemet/ai-guidelines-registry
     paths:
+      # browse the *.guidelines.md under these path and recopy them all into `.github/guidelines/
       - SWE/Git/Git_Commit_Message
       - SWE/Python/Python_Unit_Test
