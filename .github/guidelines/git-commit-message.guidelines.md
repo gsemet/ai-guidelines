@@ -1,5 +1,6 @@
 ---
-name: Git Commit Message Guideline 2.2
+name: Git Commit Message Guideline
+version: 3.0
 description: Guidelines for writing conventional commits that communicate intent and user impact
 metadata:
   owner: Gaetan Semet <gaetan.semet@ampere.cars>
@@ -39,22 +40,17 @@ which limitation is resolved, not implementation details.
    `Assisted-by: MODEL_PROVIDER:MODEL_NAME FRAMEWORK`. Use the underlying
    model family/vendor, never the interface or IDE; use the specific model
    version; and include the optional SDD framework only when it drove the
-   implementation. Determine provider and model from current harness/session
-   metadata. For Craftsman, use `Craftsman-Session-Main-Model` or its
-   equivalent usage record. Never copy attribution or guess. If it cannot be
+   implementation. Determine provider and model from the current harness or
+   session metadata. Never copy attribution or guess. If it cannot be
    verified, stop and obtain it.
-
-For Craftsman workflow commits, do not hand-author session or PRD-scoping
-trailers. The centralized amendment command owns exactly:
-`Craftsman-Change-Request-Name`, `Craftsman-Session-ID`,
-`Craftsman-Session-Main-Model`, `Craftsman-Session-Acc-Usage`, and
-`Craftsman-Session-Acc-AIC`. Missing session context is warn-only, but the PRD
-marker remains required to scope current history. Former session-trailer
-vocabulary is not a compatibility alias.
+8. If your workflow tooling owns a set of generated metadata trailers, do not
+   hand-author them. Let the tool write them, and treat its trailer vocabulary
+   as authoritative rather than reproducing older names as aliases.
 
 Valid attribution uses forms such as `Assisted-by: Claude:Sonnet-4.6`,
-`Assisted-by: Claude:Sonnet-4.6 Craftsman`, and `Assisted-by: GPT:4o`.
-`GitHub Copilot`, `Cursor`, and `AI` are invalid attribution values.
+`Assisted-by: Claude:Sonnet-4.6 SpecKit`, and `Assisted-by: GPT:4o`.
+`GitHub Copilot`, `Cursor`, and `AI` are invalid attribution values, because
+they name an interface rather than a model.
 
 ## Positive example
 

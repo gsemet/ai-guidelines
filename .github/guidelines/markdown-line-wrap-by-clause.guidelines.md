@@ -1,3 +1,12 @@
+---
+name: Markdown Line Wrap by Clause
+version: 1.0
+description: Guidelines for wrapping Markdown content at clause boundaries to improve readability and maintainability.
+metadata:
+  owner: Gaetan Semet <gaetan.semet@ampere.cars>
+  keywords: [markdown, line-wrap, rewrap, readability]
+  guideline-id: 47e61d67-0d7b-432e-a853-052cef165f9d
+---
 # Rewrap Markdown
 
 Apply these rules to user-facing Markdown such as documentation, README files,
