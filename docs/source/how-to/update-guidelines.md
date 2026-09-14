@@ -8,8 +8,9 @@
 $ guidelines outdated
 ```
 
-`outdated` is strictly read-only. It resolves references and compares them against the
-lockfile. It writes nothing.
+`outdated` is strictly read-only.
+It resolves references and compares them against the lockfile.
+It writes nothing.
 
 ## 2. Review the plan
 
@@ -17,8 +18,8 @@ lockfile. It writes nothing.
 $ guidelines update --dry-run
 ```
 
-This prints the plan — which declarations would move, from which revision to which — and
-applies nothing.
+This prints the plan (which declarations would move, from which revision to which)
+and applies nothing.
 
 ## 3. Apply
 
@@ -42,24 +43,27 @@ To move a pinned declaration, edit `ref` in `guidelines.yml` and run `guidelines
 
 ## Handling local edits
 
-If you edited a managed file, its SHA-256 no longer matches the lockfile. The tool will not
-pretend otherwise:
+If you edited a managed file, its SHA-256 no longer matches the lockfile.
+The tool will not pretend otherwise:
 
-- **Ordinary sync** warns and overwrites. Your edit is reported before it is replaced.
-- **A stale locally edited file is never automatically deleted.** If a declaration stops
-  selecting a file you had modified, the file stays and is reported.
+- **Ordinary sync** warns and overwrites.
+  Your edit is reported before it is replaced.
+- **A stale locally edited file is never automatically deleted.**
+  If a declaration stops selecting a file you had modified, the file stays and is reported.
 
-If you want an edit to survive, it does not belong in a managed file. Put it in a
-project-owned guideline that no declaration selects.
+If you want an edit to survive, it does not belong in a managed file.
+Put it in a project-owned guideline that no declaration selects.
 
-## Refreshing the resolution cache
+## Refreshing discovery metadata
+
+`guidelines update` always builds its plan from the current source resolution.
+The `--refresh` and `--no-cache` options belong to `guidelines search`, where they control the
+separate discovery cache:
 
 ```console
-$ guidelines update --refresh
+$ guidelines search LOCATION QUERY --refresh
+$ guidelines search LOCATION QUERY --no-cache
 ```
-
-Forces revalidation against the remote rather than trusting cached resolution. Use
-`--no-cache` to bypass the cache entirely.
 
 ## Removing a declaration
 
@@ -67,5 +71,7 @@ Forces revalidation against the remote rather than trusting cached resolution. U
 $ guidelines remove IDENTIFIER
 ```
 
-This removes the *declaration*. **Installed files are preserved.** Delete them yourself if
-you want them gone — the tool does not destroy content it did not just write.
+This removes the *declaration*.
+**Installed files are preserved.**
+Delete them yourself if you want them gone: the tool does not destroy content it did not just
+write.

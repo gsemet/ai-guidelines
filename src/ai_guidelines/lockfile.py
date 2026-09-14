@@ -39,7 +39,8 @@ def load_lockfile(path: Path | str) -> GuidelinesLock:
     """Load and validate a neutral lockfile.
 
     Args:
-        path: Path to ``guidelines.lock.json``.
+        path:
+            Path to ``guidelines.lock.json``.
 
     Returns:
         A validated neutral lock document.
@@ -71,8 +72,10 @@ def save_lockfile(path: Path | str, lockfile: GuidelinesLock) -> None:
     """Validate and atomically save a normalized neutral lockfile.
 
     Args:
-        path: Destination path for ``guidelines.lock.json``.
-        lockfile: Lock document to persist.
+        path:
+            Destination path for ``guidelines.lock.json``.
+        lockfile:
+            Lock document to persist.
 
     Raises:
         TypeError: If the document or destination type is unsupported.

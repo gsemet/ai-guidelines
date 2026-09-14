@@ -1,6 +1,7 @@
 # How-To Guides
 
-Task-oriented recipes. Each page solves one specific problem.
+Task-oriented recipes.
+Each page solves one specific problem.
 
 ```{toctree}
 :maxdepth: 1

@@ -18,7 +18,14 @@ Read `CONSTITUTION.md` before changing the project.
 ## Guidelines
 
 - `.github/guidelines/git-commit-message.guidelines.md`: Writing good Git commit messages
+- `.github/guidelines/python-module-documentation.guidelines.md`: Writing Python module/function
+  docstring and documentation
 - `.github/guidelines/python-unittest.guidelines.md`: Writing and organizing Python unit tests
+- `.github/guidelines/markdown-line-wrap.guidelines.md`: how to wrap lines in user-facing Markdown file
+
+Precedence rule:
+
+- CONSTITUTION > AGENTS.md > Guidelines > skills > other prompts
 
 ## Quality Gate
 

@@ -10,6 +10,7 @@ import ai_guidelines.api as api
 
 
 def test_facade_exports_only_supported_capabilities() -> None:
+    """Expose only the supported stable facade names."""
     expected = {
         "DiscoveryResult",
         "GuidelineUpdateResult",
@@ -42,16 +43,23 @@ def test_facade_exports_only_supported_capabilities() -> None:
 
 
 def test_cache_services_do_not_require_a_project_manifest() -> None:
+    """Exercise cache facade helpers without loading a project manifest."""
+
     class FakeCache:
+        """Provide the cache methods consumed by the facade helpers."""
+
         cache_dir = Path("/tmp/ai-guidelines-test-cache")
 
         def size(self) -> int:
+            """Return a deterministic cache size."""
             return 17
 
         def clear_all(self) -> int:
+            """Return a deterministic number of removed entries."""
             return 3
 
         def cleanup(self) -> int:
+            """Return a deterministic number of pruned entries."""
             return 2
 
     cache = FakeCache()
@@ -66,5 +74,6 @@ def test_cache_services_do_not_require_a_project_manifest() -> None:
 
 
 def test_facade_imports_every_supported_symbol() -> None:
+    """Keep package-level exports identical to the public API module."""
     for name in api.__all__:
         assert getattr(ai_guidelines, name) is getattr(api, name)

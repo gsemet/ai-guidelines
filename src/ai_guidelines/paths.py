@@ -10,14 +10,17 @@ components.
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .models import GuidelineDeclaration, GuidelinesLockEntry
 
 
 class TargetPathError(ValueError):
-    """Raised when a guideline target is unsafe or leaves the project."""
+    """Raised when a guideline target is unsafe or leaves the project.
+
+    .. versionadded:: 0.2.0
+    """
 
 
 def _project_root(project_root: Path | str) -> Path:
@@ -63,6 +66,9 @@ def _assert_contained(project_root: Path, candidate: Path) -> None:
 def resolve_target_path(project_root: Path | str, target_path: str | Path) -> Path:
     """Resolve and validate a configured project-relative target.
 
+    .. versionchanged:: 0.2.0
+        Existing symlink components are checked before a target is accepted.
+
     Args:
         project_root:
             Project root used as the containment boundary.
@@ -76,6 +82,12 @@ def resolve_target_path(project_root: Path | str, target_path: str | Path) -> Pa
     Raises:
         TargetPathError:
             If the path is absolute, traversing, or escapes through a symlink.
+
+    Examples:
+        >>> resolve_target_path("/tmp/project", ".agents/guidelines").resolve() == Path(
+        ...     "/tmp/project/.agents/guidelines"
+        ... ).resolve()
+        True
     """
     root = _project_root(project_root)
     candidate = root / Path(_relative_target(str(target_path)))
@@ -85,6 +97,9 @@ def resolve_target_path(project_root: Path | str, target_path: str | Path) -> Pa
 
 def resolve_guideline_target(project_root: Path | str) -> Path:
     """Select the default target from the project's existing layout.
+
+    .. versionchanged:: 0.2.0
+        The selected layout is validated against project-root containment.
 
     Args:
         project_root:
@@ -97,6 +112,13 @@ def resolve_guideline_target(project_root: Path | str) -> Path:
     Raises:
         TargetPathError:
             If the selected target cannot be safely contained.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:
+        ...     root = Path(directory).resolve()
+        ...     resolve_guideline_target(root).relative_to(root).as_posix()
+        '.github/guidelines'
     """
     root = _project_root(project_root)
     relative = (
@@ -114,6 +136,9 @@ def select_guideline_target(
 ) -> Path:
     """Select a target using declaration, lock, default, and layout precedence.
 
+    .. versionchanged:: 0.2.0
+        Explicit declaration and lock targets are checked for symlink escapes.
+
     Args:
         project_root:
             Consumer project root.
@@ -126,6 +151,16 @@ def select_guideline_target(
 
     Returns:
         A contained target path.  The directory is not created.
+
+    Examples:
+        >>> from ai_guidelines.models import GuidelineDeclaration
+        >>> declaration = GuidelineDeclaration(
+        ...     source="github/example/repo", target_path=".docs"
+        ... )
+        >>> select_guideline_target("/tmp/project", declaration=declaration).resolve() == Path(
+        ...     "/tmp/project/.docs"
+        ... ).resolve()
+        True
     """
     configured: str | None = None
     if declaration is not None:
@@ -141,12 +176,61 @@ def select_guideline_target(
     )
 
 
+def declaration_location(
+    declaration: GuidelineDeclaration,
+    project_root: Path | str,
+    *,
+    requested_ref: str | None = None,
+) -> Any:
+    """Resolve a declaration source and its optional literal selector.
+
+    .. versionchanged:: 0.2.0
+        Relative local sources are resolved from the consuming project root.
+
+    Args:
+        declaration:
+            Validated manifest declaration to resolve.
+        project_root:
+            Project directory used for relative local sources.
+        requested_ref:
+            Optional resolved revision used for locked replay.
+
+    Returns:
+        A validated source location scoped to ``declaration.path`` when set.
+
+    Raises:
+        ValueError:
+            If the declaration source or selector is unsafe.
+
+    Examples:
+        >>> from ai_guidelines.models import GuidelineDeclaration
+        >>> declaration = GuidelineDeclaration(
+        ...     source="./guidelines/", path="team.guideline.md"
+        ... )
+        >>> declaration_location(declaration, "/tmp/project").relative_path
+        'team.guideline.md'
+    """
+    from .locations import parse_location, with_source_path
+
+    project = Path(project_root).expanduser().resolve()
+    location = parse_location(
+        declaration.source,
+        ref=requested_ref if requested_ref is not None else declaration.ref,
+        base_dir=project,
+    )
+    return (
+        with_source_path(location, declaration.path) if declaration.path is not None else location
+    )
+
+
 def pin_target_path(
     declaration: GuidelineDeclaration,
     project_root: Path | str,
     default_target_path: str | None = None,
 ) -> GuidelineDeclaration:
     """Return a declaration with its effective target persisted.
+
+    .. versionadded:: 0.2.0
 
     Args:
         declaration:
@@ -164,6 +248,12 @@ def pin_target_path(
             If ``declaration`` is not a :class:`GuidelineDeclaration`.
         TargetPathError:
             If the effective target is unsafe.
+
+    Examples:
+        >>> from ai_guidelines.models import GuidelineDeclaration
+        >>> declaration = GuidelineDeclaration(source="github/example/repo")
+        >>> pin_target_path(declaration, "/tmp/project").target_path
+        '.github/guidelines'
     """
     from .models import GuidelineDeclaration
 
@@ -194,6 +284,12 @@ def target_is_folder(target_path: Path | str, project_root: Path | str | None = 
     Raises:
         TargetPathError:
             If a supplied project root exposes an unsafe path.
+
+    Examples:
+        >>> target_is_folder(".agents/guidelines")
+        True
+        >>> target_is_folder(".agents/guidelines.md")
+        False
     """
     value = str(target_path)
     if value.endswith(("/", "\\")):
@@ -207,6 +303,8 @@ def target_is_folder(target_path: Path | str, project_root: Path | str | None = 
 
 def operation_lock_path(project_root: Path | str) -> Path:
     """Return the neutral project operation-lock path.
+
+    .. versionadded:: 0.2.0
 
     The lock intentionally uses a project-root dotfile rather than any
     host-specific state directory.  It is a persistent marker used by the

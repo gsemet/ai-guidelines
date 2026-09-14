@@ -12,11 +12,13 @@ from ai_guidelines.locations import parse_location
 
 
 def _write(path: Path, content: str = "# Body\n") -> None:
+    """Create a fixture file and its parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
 
 def test_folder_discovery_filters_exact_suffixes_and_retains_namespace(tmp_path: Path) -> None:
+    """Discover supported suffixes while preserving nested source paths."""
     source = tmp_path / "source"
     _write(
         source / "engineering" / "git.guideline.md",
@@ -40,6 +42,7 @@ def test_folder_discovery_filters_exact_suffixes_and_retains_namespace(tmp_path:
 
 
 def test_pattern_matches_suffix_stripped_basename_case_sensitively(tmp_path: Path) -> None:
+    """Match patterns against suffix-stripped basenames case-sensitively."""
     source = tmp_path / "source"
     _write(source / "git_hooks.guideline.md")
     _write(source / "git_hooks.guidelines.md")
@@ -70,6 +73,7 @@ def test_pattern_matches_guideline_question_mark_suffix(tmp_path: Path) -> None:
 
 
 def test_paths_select_literal_and_suffixless_source_paths(tmp_path: Path) -> None:
+    """Select literal files using both suffixed and suffixless paths."""
     source = tmp_path / "source"
     selected_file = source / "guidelines" / "Engineering" / "Git" / "git.guideline.md"
     selected_stem = source / "guidelines" / "Engineering" / "Python" / "python.guideline.md"
@@ -93,6 +97,7 @@ def test_paths_select_literal_and_suffixless_source_paths(tmp_path: Path) -> Non
 
 
 def test_directory_selector_flattens_source_folder(tmp_path: Path) -> None:
+    """Flatten a selected directory while retaining nested relative paths."""
     source = tmp_path / "source"
     _write(source / "guidelines" / "one.guideline.md")
     _write(source / "guidelines" / "nested" / "two.guidelines.md")
@@ -107,6 +112,7 @@ def test_directory_selector_flattens_source_folder(tmp_path: Path) -> None:
 
 
 def test_empty_selection_returns_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Report a warning when a selector matches no guideline files."""
     source = tmp_path / "source"
     _write(source / "python.guidelines.md")
 
@@ -121,6 +127,7 @@ def test_empty_selection_returns_warning(tmp_path: Path, caplog: pytest.LogCaptu
 def test_malformed_optional_frontmatter_is_nonfatal(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Keep discovering a guideline when optional frontmatter is malformed."""
     source = tmp_path / "source"
     _write(source / "broken.guidelines.md", "---\nname: [unterminated\n---\n# Body\n")
 
@@ -135,6 +142,7 @@ def test_malformed_optional_frontmatter_is_nonfatal(
 
 
 def test_single_file_and_unrelated_file_are_supported(tmp_path: Path) -> None:
+    """Handle a selected guideline file and ignore an unrelated file."""
     supported = tmp_path / "one.guidelines.md"
     unrelated = tmp_path / "one.txt"
     _write(supported)
@@ -151,6 +159,7 @@ def test_single_file_and_unrelated_file_are_supported(tmp_path: Path) -> None:
 
 
 def test_supported_suffixes_are_case_sensitive() -> None:
+    """Accept only the two documented lowercase guideline suffixes."""
     assert is_guideline_file("a.guideline.md")
     assert is_guideline_file("a.guidelines.md")
     assert not is_guideline_file("a.GUIDELINE.md")
@@ -159,6 +168,7 @@ def test_supported_suffixes_are_case_sensitive() -> None:
 
 
 def test_discovery_rejects_symlink_outside_source(tmp_path: Path) -> None:
+    """Reject discovered files whose symlinks escape the source root."""
     source = tmp_path / "source"
     outside = tmp_path / "outside"
     source.mkdir()

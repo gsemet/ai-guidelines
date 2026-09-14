@@ -90,6 +90,7 @@ def test_lockfile_preserves_previous_bytes_when_replacement_fails(
     original = path.read_bytes()
 
     def fail_replace(*args: object) -> None:
+        """Inject an operating-system replacement failure."""
         raise OSError("replacement failed")
 
     monkeypatch.setattr("ai_guidelines.atomic.os.replace", fail_replace)

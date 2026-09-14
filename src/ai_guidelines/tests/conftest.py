@@ -11,7 +11,8 @@ def _find_project_root(start: Path) -> Path:
     """Walk upward until the directory containing ``pyproject.toml`` is found.
 
     Args:
-        start: Directory to start searching from.
+        start:
+            Directory to start searching from.
 
     Returns:
         The repository root.

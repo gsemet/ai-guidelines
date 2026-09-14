@@ -78,5 +78,21 @@ from ai_guidelines.cli import guidelines
 
 
 def main(*args: Any, **kwargs: Any) -> None:
-    """Run the standalone command, accepting programmatic argument strings."""
+    """Run the standalone command, accepting programmatic argument strings.
+
+    Args:
+        args:
+            Positional command-line arguments passed to Click.
+        kwargs:
+            Keyword arguments passed to Click's command entry point.
+
+    Examples:
+        >>> from contextlib import redirect_stdout
+        >>> from io import StringIO
+        >>> output = StringIO()
+        >>> with redirect_stdout(output):
+        ...     main("cache", "dir", standalone_mode=False)
+        >>> output.getvalue().strip().endswith("guideline-sources")
+        True
+    """
     guidelines.main(args=cast(list[str] | None, list(args) or None), **kwargs)

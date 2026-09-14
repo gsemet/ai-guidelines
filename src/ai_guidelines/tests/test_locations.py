@@ -7,10 +7,18 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from ai_guidelines.locations import LocationParseError, SourceLocation, parse_location
+from ai_guidelines.locations import (
+    LocationParseError,
+    SourceLocation,
+    parse_location,
+    replace_source_location,
+    validate_source_location,
+    with_source_path,
+)
 
 
 def test_gitlab_blob_url_parses_file_and_revision() -> None:
+    """Parse a GitLab blob URL into repository, revision, and file fields."""
     location = parse_location(
         "https://gitlab.example.com/team/tools/guidelines/-/blob/"
         "main/docs/team.guideline.md?ref_type=heads"
@@ -25,6 +33,7 @@ def test_gitlab_blob_url_parses_file_and_revision() -> None:
 
 
 def test_provider_tree_urls_share_one_contract() -> None:
+    """Normalize GitLab and GitHub tree URLs to one location contract."""
     gitlab = parse_location("https://gitlab.example.com/team/repo/-/tree/release/guidelines/")
     github = parse_location("https://github.com/example/repo/tree/main/guidelines/")
 
@@ -36,6 +45,7 @@ def test_provider_tree_urls_share_one_contract() -> None:
 
 
 def test_repository_fragment_and_compact_path_preserve_selection() -> None:
+    """Preserve repository fragments and compact source paths."""
     fragment = parse_location("https://example.com/team/repo#main:guidelines/")
     compact = parse_location("https://example.com/team/repo:guidelines/Engineering")
 
@@ -47,6 +57,7 @@ def test_repository_fragment_and_compact_path_preserve_selection() -> None:
 
 
 def test_github_short_forms_and_direct_ssh_are_supported() -> None:
+    """Support GitHub shorthand, versioned shorthand, and direct SSH forms."""
     short = parse_location("github/example-repo/guidelines/")
     versioned = parse_location("microsoft/example-repo#v1.0.0")
     ssh = parse_location("git@example.com:team/repo.git#main:guidelines/")
@@ -62,6 +73,7 @@ def test_github_short_forms_and_direct_ssh_are_supported() -> None:
 
 
 def test_local_file_and_folder_locations_resolve_against_base(tmp_path: Path) -> None:
+    """Resolve local files and folders relative to an explicit base directory."""
     folder = tmp_path / "shared" / "guidelines"
     folder.mkdir(parents=True)
     file_path = folder / "team.guideline.md"
@@ -94,6 +106,7 @@ def test_local_file_and_folder_locations_resolve_against_base(tmp_path: Path) ->
     ],
 )
 def test_unsafe_locations_are_rejected_without_leaking_input(expression: str) -> None:
+    """Reject unsafe locations without echoing sensitive input."""
     with pytest.raises(LocationParseError) as error:
         parse_location(expression)
 
@@ -108,6 +121,7 @@ def test_unsafe_locations_are_rejected_without_leaking_input(expression: str) ->
     ["--upload-pack=evil", "main\nother", "main\r", "main\t", "main\x00"],
 )
 def test_unsafe_revision_override_is_rejected(revision: str) -> None:
+    """Reject unsafe revision overrides without exposing their contents."""
     with pytest.raises(LocationParseError, match="revision|printable|safe") as error:
         parse_location("https://example.com/team/repo#main:guidelines/", ref=revision)
 
@@ -116,6 +130,7 @@ def test_unsafe_revision_override_is_rejected(revision: str) -> None:
 
 
 def test_source_location_public_model_rejects_credentials() -> None:
+    """Reject credentials in the public source-location model."""
     with pytest.raises(ValidationError, match="credentials") as error:
         SourceLocation(
             expression="git://example.com/team/repo",
@@ -130,6 +145,7 @@ def test_source_location_public_model_rejects_credentials() -> None:
 
 
 def test_relative_local_symlink_escape_is_rejected(tmp_path: Path) -> None:
+    """Reject a local source path that escapes through a symlink."""
     outside = tmp_path / "outside"
     outside.mkdir()
     (tmp_path / "link").symlink_to(outside, target_is_directory=True)
@@ -141,6 +157,7 @@ def test_relative_local_symlink_escape_is_rejected(tmp_path: Path) -> None:
 def test_explicit_base_keeps_local_identity_stable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Keep local source identity stable when the process working directory changes."""
     project = tmp_path / "project"
     source = project / "shared" / "guidelines"
     source.mkdir(parents=True)
@@ -154,3 +171,37 @@ def test_explicit_base_keeps_local_identity_stable(
 
     assert first.canonical_source == second.canonical_source
     assert first.local_path == second.local_path == source.resolve()
+
+
+def test_source_location_revalidation_rejects_tampering_and_supports_replacement() -> None:
+    """Revalidate identity fields before accepting a location replacement."""
+    location = parse_location("https://example.com/team/repo#main:guidelines/")
+
+    assert validate_source_location(location) == location
+    replaced = replace_source_location(location, requested_ref="release")
+    assert replaced.requested_ref == "release"
+    with pytest.raises(LocationParseError, match="inconsistent|unsafe"):
+        validate_source_location(
+            location.model_copy(update={"canonical_source": "https://example.com/other/repo"})
+        )
+    with pytest.raises(LocationParseError, match="inconsistent|unsafe"):
+        replace_source_location(location, relative_path="../outside")
+    with pytest.raises(TypeError, match="SourceLocation"):
+        replace_source_location("not a location")  # type: ignore[arg-type]
+
+
+def test_local_source_path_override_revalidates_missing_and_tampered_fields(
+    tmp_path: Path,
+) -> None:
+    """Keep local source overrides contained even for missing paths."""
+    source = tmp_path / "guidelines"
+    source.mkdir()
+    location = parse_location(str(source))
+
+    selected = with_source_path(location, "new.guidelines.md", kind="file")
+    assert selected.local_path == source / "new.guidelines.md"
+    assert selected.relative_path == "new.guidelines.md"
+    with pytest.raises(LocationParseError, match="inconsistent|unsafe"):
+        validate_source_location(location.model_copy(update={"local_path": None}))
+    with pytest.raises(LocationParseError, match="unavailable|inconsistent"):
+        with_source_path(location.model_copy(update={"local_path": None}), "new.guidelines.md")

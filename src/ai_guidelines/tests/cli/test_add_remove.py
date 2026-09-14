@@ -8,6 +8,7 @@ from ai_guidelines.cli import guidelines
 
 
 def _source(tmp_path: Path) -> Path:
+    """Create a local source containing one guideline fixture."""
     source = tmp_path / "source"
     source.mkdir()
     (source / "team.guidelines.md").write_text("team\n", encoding="utf-8")
@@ -30,6 +31,27 @@ def test_add_persists_normalized_declaration_and_syncs(tmp_path: Path, monkeypat
     manifest = (tmp_path / "guidelines.yml").read_text(encoding="utf-8")
     assert "alias: team-guide" in manifest
     assert "target_path: .docs" in manifest
+
+
+def test_add_restores_manifest_when_sync_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failed eager synchronization does not leave a new declaration behind."""
+    source = _source(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    from ai_guidelines import cli
+
+    original_sync = cli.sync_manifest
+
+    def fail_sync(_project: Path, **_kwargs: object) -> None:
+        """Inject an eager synchronization failure."""
+        raise RuntimeError("simulated sync failure")
+
+    monkeypatch.setattr(cli, "sync_manifest", fail_sync)
+    result = CliRunner().invoke(guidelines, ["add", str(source)])
+
+    assert result.exit_code != 0
+    assert not (tmp_path / "guidelines.yml").exists()
+    assert not (tmp_path / "guidelines.lock.json").exists()
+    monkeypatch.setattr(cli, "sync_manifest", original_sync)
 
 
 def test_remove_ambiguous_and_missing_identifiers_do_not_write_or_delete_files(
@@ -72,6 +94,28 @@ def test_remove_keeps_synchronized_files(tmp_path: Path, monkeypatch) -> None:
     assert "No guideline files were deleted or modified." in result.output
 
 
+def test_remove_restores_manifest_when_lock_publication_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failed lock publication leaves the removed declaration and lock intact."""
+    source = _source(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(guidelines, ["add", str(source), "--alias", "team"]).exit_code == 0
+    manifest_before = (tmp_path / "guidelines.yml").read_bytes()
+    lock_before = (tmp_path / "guidelines.lock.json").read_bytes()
+    from ai_guidelines import lockfile
+
+    def fail_save(*_args, **_kwargs) -> None:
+        """Inject lock publication failure."""
+        raise OSError("simulated lock failure")
+
+    monkeypatch.setattr(lockfile, "save_lockfile", fail_save)
+    result = runner.invoke(guidelines, ["remove", "team"])
+
+    assert result.exit_code != 0
+    assert (tmp_path / "guidelines.yml").read_bytes() == manifest_before
+    assert (tmp_path / "guidelines.lock.json").read_bytes() == lock_before
+
+
 def test_add_supports_ref_and_all_selector_forms(tmp_path: Path, monkeypatch) -> None:
     """Add accepts a ref, literal path, stem pattern, and target/alias options."""
     source = _source(tmp_path)
@@ -109,7 +153,7 @@ def test_add_literal_path_ref_and_target_are_normalized_and_eager(
     monkeypatch.chdir(tmp_path)
     from ai_guidelines import cli
 
-    monkeypatch.setattr(cli, "sync_manifest", lambda _project: None)
+    monkeypatch.setattr(cli, "sync_manifest", lambda _project, **_kwargs: None)
     result = CliRunner().invoke(
         guidelines,
         [
@@ -131,7 +175,12 @@ def test_add_literal_path_ref_and_target_are_normalized_and_eager(
     assert "target_path: .docs" in manifest
 
 
-def _run_add_selector(tmp_path: Path, monkeypatch, arguments: list[str], expected: str) -> None:
+def _run_add_selector(
+    tmp_path: Path,
+    monkeypatch,
+    arguments: list[str],
+    expected: str,
+) -> None:
     """Run one selector form in an isolated project and verify eager materialization."""
     source = tmp_path / "source"
     (source / "nested").mkdir(parents=True)
@@ -140,7 +189,7 @@ def _run_add_selector(tmp_path: Path, monkeypatch, arguments: list[str], expecte
     monkeypatch.chdir(tmp_path)
     from ai_guidelines import cli
 
-    monkeypatch.setattr(cli, "sync_manifest", lambda _project: None)
+    monkeypatch.setattr(cli, "sync_manifest", lambda _project, **_kwargs: None)
     result = CliRunner().invoke(guidelines, ["add", "github/example/repository", *arguments])
     assert result.exit_code == 0, result.output
     manifest = (tmp_path / "guidelines.yml").read_text(encoding="utf-8")

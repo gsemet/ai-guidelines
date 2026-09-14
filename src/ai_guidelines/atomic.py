@@ -16,16 +16,18 @@ class AtomicWriteError(OSError):
 
 
 def atomic_write(path: Path | str, content: str | bytes) -> None:
-    """Write content to a same-directory temporary file and replace the destination.
+    """Write content through a same-directory temporary file and replace the destination.
 
     Args:
-        path: Destination file.
-        content: UTF-8 text or bytes to publish.
+        path:
+            Destination file.
+        content:
+            UTF-8 text or bytes to publish.
 
     Raises:
         AtomicWriteError: If writing, flushing, or replacement fails.
 
-    Example:
+    Examples:
         >>> atomic_write("/tmp/ai-guidelines-example.txt", "hello\\n")
     """
     destination = Path(path)
@@ -70,7 +72,14 @@ def atomic_write(path: Path | str, content: str | bytes) -> None:
 
 
 def atomic_write_text(path: Path | str, content: str) -> None:
-    """Write UTF-8 text through :func:`atomic_write`."""
+    """Write UTF-8 text through :func:`atomic_write`.
+
+    Args:
+        path:
+            Destination file.
+        content:
+            Text to publish as UTF-8.
+    """
     atomic_write(path, content)
 
 
@@ -83,8 +92,10 @@ def advisory_lock(path: Path | str, timeout: float = 30.0) -> Iterator[None]:
     the pathname could let concurrent processes lock different inodes.
 
     Args:
-        path: Lock-file path.
-        timeout: Seconds to wait for another operation.
+        path:
+            Lock-file path.
+        timeout:
+            Seconds to wait for another operation.
 
     Raises:
         TimeoutError: If the lock cannot be acquired before ``timeout``.

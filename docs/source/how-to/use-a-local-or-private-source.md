@@ -19,11 +19,11 @@ guidelines:
     pattern: "*.guideline.md"
 ```
 
-Local sources must stay inside the resolved base directory. Traversal outside it, and escape
-through a symlink, are both rejected.
+Local sources must stay inside the resolved base directory.
+Traversal outside it, and escape through a symlink, are both rejected.
 
-This is the fastest way to develop a guideline: point at a working copy, iterate, then publish
-it to a registry when it stabilizes.
+This is the fastest way to develop a guideline: point at a working copy,
+iterate, then publish it to a registry when it stabilizes.
 
 ## A single local file
 
@@ -46,8 +46,8 @@ GitLab web URLs are also accepted directly, including the `/-/blob/` and `/-/tre
 
 ## An SSH remote
 
-For private repositories, SSH is usually the least friction: the tool shells out to Git, so
-your existing SSH agent, `~/.ssh/config`, and deploy keys all apply unchanged.
+For private repositories, SSH is usually the least friction: the tool shells out to Git,
+so your existing SSH agent, `~/.ssh/config`, and deploy keys all apply unchanged.
 
 ```yaml
 guidelines:
@@ -77,12 +77,12 @@ The tool refuses any source expression that embeds a credential:
 ```
 
 Rejected values include URL userinfo, and query or fragment keys that look like credentials
-(`token`, `secret`, `password`, `credential`, `apikey`, `auth`, `signature`, `key`,
-`accesskey`, `sig`, `expires`).
+(`token`, `secret`, `password`, `credential`, `apikey`, `auth`, `signature`, `key`, `accesskey`,
+`sig`, `expires`).
 
-This is not merely hygiene. `guidelines.yml` and `guidelines.lock.json` are committed files —
-a credential accepted here becomes a credential leaked into version control, and into every
-clone of every consumer.
+This is not merely hygiene.
+`guidelines.yml` and `guidelines.lock.json` are committed files: a credential accepted here
+becomes a credential leaked into version control, and into every clone of every consumer.
 
 Authenticate through Git instead: SSH keys, a credential helper, or `~/.netrc`.
 
@@ -92,5 +92,5 @@ Authenticate through Git instead: SSH keys, a credential helper, or `~/.netrc`.
 $ guidelines list
 ```
 
-Then check `canonical_source` in `guidelines.lock.json`. Credentials never appear there,
-because they never enter the canonical identity.
+Then check `canonical_source` in `guidelines.lock.json`.
+Credentials never appear there, because they never enter the canonical identity.

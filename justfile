@@ -76,7 +76,7 @@ test-fast:
 # Run the test suite with the coverage gate.
 [group('test')]
 tests-coverage:
-    {{ uv }} run pytest -n auto --cov=ai_guidelines --cov-report=term-missing --cov-report=xml --cov-fail-under=85 src/ai_guidelines/tests
+    {{ uv }} run pytest -n auto --cov=ai_guidelines --cov-report=term-missing --cov-report=xml --cov-fail-under=90 src/ai_guidelines/tests
 
 # Run the slow build-backend tests excluded from the default gate.
 [group('test')]
@@ -97,6 +97,7 @@ docs: changelog
 [group('docs')]
 docs-check:
     {{ uv }} run sphinx-build -W -b html docs/source docs/_build/html
+    {{ uv }} run sphinx-build -W -b doctest docs/source docs/_build/doctest
 
 # Serve the documentation with live reload.
 [group('docs')]
@@ -125,7 +126,7 @@ build:
 update-guidelines:
     {{ uv }} run guidelines update
 
-# Main quality gate. Provably non-mutating: only `-check` variants are invoked.
+# Main quality gate. Formatting checks, tests, docs, and package build all run here.
 [group('gate')]
 preflight:
     just style-check
@@ -133,7 +134,8 @@ preflight:
     just typecheck
     just tests-coverage
     just docs-check
-    @echo "✅ Preflight passed (style, lint, types, coverage, docs)."
+    just build
+    @echo "✅ Preflight passed (style, lint, types, coverage, docs, build)."
 
 # CI gate. Identical to `preflight` by construction.
 [group('gate')]

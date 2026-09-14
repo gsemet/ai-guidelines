@@ -156,15 +156,21 @@ def _as_utc(value: datetime, field_name: str) -> datetime:
 class SourceIdentity(BaseModel):
     """Stable source identity separated from its display name and alias.
 
+    .. versionchanged:: 0.2.0
+        Source identity now uses credential-free canonical source values.
+
     Args:
-        canonical_source: URL or absolute local identity used for comparisons.
-        display_name: Human-readable source name.
-        alias: Optional safe identifier chosen by the project.
+        canonical_source:
+            URL or absolute local identity used for comparisons.
+        display_name:
+            Human-readable source name.
+        alias:
+            Optional safe identifier chosen by the project.
 
     Raises:
         pydantic.ValidationError: If identity data is empty or unsafe.
 
-    Example:
+    Examples:
         >>> SourceIdentity(
         ...     canonical_source="https://example.com/guidelines", display_name="guidelines"
         ... ).display_name
@@ -194,19 +200,29 @@ class SourceIdentity(BaseModel):
 class GuidelineDeclaration(BaseModel):
     """One user-authored manifest declaration.
 
+    .. versionchanged:: 0.2.0
+        Declarations support plural selectors, aliases, and validated project-relative targets.
+
     Args:
-        source: Local or remote source expression.
-        ref: Optional branch, tag, commit, or version constraint.
-        path: Legacy literal source-relative path.
-        pattern: Legacy filename-stem glob.
-        paths: Plural source selectors.
-        target_path: Optional project-relative destination.
-        alias: Optional stable command identifier.
+        source:
+            Local or remote source expression.
+        ref:
+            Optional branch, tag, commit, or version constraint.
+        path:
+            Legacy literal source-relative path.
+        pattern:
+            Legacy filename-stem glob.
+        paths:
+            Plural source selectors.
+        target_path:
+            Optional project-relative destination.
+        alias:
+            Optional stable command identifier.
 
     Raises:
         pydantic.ValidationError: If source, selectors, revisions, or targets are unsafe.
 
-    Example:
+    Examples:
         >>> GuidelineDeclaration(source="github/example/guidelines/", alias="team").alias
         'team'
     """
@@ -280,7 +296,8 @@ class GuidelineDeclaration(BaseModel):
         """Bind relative local identity to a project directory.
 
         Args:
-            base_dir: Directory used to resolve relative local sources.
+            base_dir:
+                Directory used to resolve relative local sources.
 
         Returns:
             This declaration, for convenient fluent setup.
@@ -288,11 +305,11 @@ class GuidelineDeclaration(BaseModel):
         Raises:
             OSError: If the base directory cannot be resolved.
 
-        Example:
+        Examples:
             >>> GuidelineDeclaration(source="./guidelines/").bind_source_base(
             ...     "/tmp/project"
-            ... ).source_base_dir
-            PosixPath('/tmp/project')
+            ... ).source_base_dir.name
+            'project'
         """
         self._source_base_dir = Path(base_dir).expanduser().resolve()
         return self
@@ -368,15 +385,21 @@ class GuidelineDeclaration(BaseModel):
 class GuidelinesManifest(BaseModel):
     """Version-one project-owned ``guidelines.yml`` document.
 
+    .. versionchanged:: 0.2.0
+        Manifest declarations are normalized and bound to a project source base.
+
     Args:
-        version: Supported manifest schema version, currently ``1``.
-        default_guidelines_path: Optional project-relative target fallback.
-        guidelines: Ordered scalar or object declarations.
+        version:
+            Supported manifest schema version, currently ``1``.
+        default_guidelines_path:
+            Optional project-relative target fallback.
+        guidelines:
+            Ordered scalar or object declarations.
 
     Raises:
         pydantic.ValidationError: If version, structure, or declarations are invalid.
 
-    Example:
+    Examples:
         >>> GuidelinesManifest(guidelines=["./shared/guidelines/"]).version
         1
     """
@@ -412,7 +435,8 @@ class GuidelinesManifest(BaseModel):
         """Bind all local declarations to one project base.
 
         Args:
-            base_dir: Directory containing the manifest.
+            base_dir:
+                Directory containing the manifest.
 
         Returns:
             This manifest after binding each declaration.
@@ -436,13 +460,18 @@ class GuidelinesManifest(BaseModel):
         )
 
     def find(
-        self, source: str, *, base_dir: Path | str | None = None
+        self,
+        source: str,
+        *,
+        base_dir: Path | str | None = None,
     ) -> GuidelineDeclaration | None:
         """Find a declaration by expression or canonical source identity.
 
         Args:
-            source: Expression or canonical source to compare.
-            base_dir: Optional project base for relative lookup.
+            source:
+                Expression or canonical source to compare.
+            base_dir:
+                Optional project base for relative lookup.
 
         Returns:
             The first matching declaration, or ``None``.
@@ -468,15 +497,21 @@ class GuidelinesManifest(BaseModel):
 class GuidelineFileRecord(BaseModel):
     """One managed source file and its last-owned content hash.
 
+    .. versionchanged:: 0.2.0
+        File records carry normalized project-relative targets and optional ownership hashes.
+
     Args:
-        source_path: Safe path relative to the resolved source.
-        target_path: Safe path relative to the consumer project.
-        sha256: Optional lowercase SHA-256 hash for incomplete/adopted records.
+        source_path:
+            Safe path relative to the resolved source.
+        target_path:
+            Safe path relative to the consumer project.
+        sha256:
+            Optional lowercase SHA-256 hash for incomplete/adopted records.
 
     Raises:
         pydantic.ValidationError: If paths escape their roots or the hash is invalid.
 
-    Example:
+    Examples:
         >>> GuidelineFileRecord(
         ...     source_path="guide.md", target_path=".agents/guide.md"
         ... ).sha256 is None
@@ -491,7 +526,11 @@ class GuidelineFileRecord(BaseModel):
 
     @field_validator("source_path", "target_path")
     @classmethod
-    def validate_record_paths(cls, value: str, info: Any) -> str:
+    def validate_record_paths(
+        cls,
+        value: str,
+        info: Any,
+    ) -> str:
         """Reject absolute and traversal paths."""
         return _validate_relative_path(value, info.field_name)
 
@@ -514,23 +553,54 @@ class GuidelineFileRecord(BaseModel):
 class GuidelinesLockEntry(BaseModel):
     """Resolved provenance and managed files for one declaration.
 
+    .. versionchanged:: 0.2.0
+        Entries retain selectors, aliases, targets, semantic-version provenance, and exact
+        replay metadata.
+
     Args:
-        expression: Original manifest source expression.
-        name: Stable display name.
-        source: Canonical source identity.
-        source_type: ``local``, ``git``, ``github``, or ``gitlab``.
-        requested_ref: Revision requested by the declaration.
-        reference_kind: Provider-classified revision kind.
-        resolved_ref: Revision actually captured.
-        resolved_version: Resolved version where applicable.
-        commit: Resolved Git commit.
-        captured_at: UTC capture timestamp.
-        files: Managed source-to-target records.
+        expression:
+            Original manifest source expression.
+        name:
+            Stable display name.
+        source:
+            Canonical source identity.
+        source_type:
+            ``local``, ``git``, ``github``, or ``gitlab``.
+        requested_ref:
+            Revision requested by the declaration.
+        path:
+            Legacy literal source-relative selector.
+        paths:
+            Plural source selectors.
+        pattern:
+            Legacy filename-stem glob.
+        reference_kind:
+            Provider-classified revision kind.
+        resolved_ref:
+            Revision actually captured.
+        resolved_version:
+            Resolved version where applicable.
+        commit:
+            Resolved Git commit.
+        captured_at:
+            UTC capture timestamp.
+        semver_constraint:
+            Original semantic-version constraint, when used.
+        resolved_tag:
+            Tag selected for a semantic-version constraint.
+        resolution_timestamp:
+            UTC time at which the semantic-version tag was selected.
+        target_path:
+            Project-relative destination.
+        alias:
+            Declaration alias, when configured.
+        files:
+            Managed source-to-target records.
 
     Raises:
         pydantic.ValidationError: If provenance, paths, timestamps, or hashes are invalid.
 
-    Example:
+    Examples:
         >>> entry = GuidelinesLockEntry(
         ...     expression="./guidelines/",
         ...     name="guidelines",
@@ -567,7 +637,11 @@ class GuidelinesLockEntry(BaseModel):
 
     @field_validator("expression", "name")
     @classmethod
-    def validate_identity_text(cls, value: str, info: Any) -> str:
+    def validate_identity_text(
+        cls,
+        value: str,
+        info: Any,
+    ) -> str:
         """Reject whitespace-only generated identity metadata."""
         if not value.strip():
             raise ValueError(f"{info.field_name} must not be blank")
@@ -629,7 +703,11 @@ class GuidelinesLockEntry(BaseModel):
 
     @field_validator("captured_at", "resolution_timestamp")
     @classmethod
-    def normalize_timestamps(cls, value: datetime | None, info: Any) -> datetime | None:
+    def normalize_timestamps(
+        cls,
+        value: datetime | None,
+        info: Any,
+    ) -> datetime | None:
         """Require timezone-aware timestamps and normalize to UTC."""
         return _as_utc(value, info.field_name) if value is not None else None
 
@@ -666,25 +744,33 @@ class GuidelinesLockEntry(BaseModel):
 
     def is_complete(self) -> bool:
         """Return whether this entry can support frozen replay."""
+        exact_revision = (
+            bool(self.resolved_ref)
+            if self.source_type == "local"
+            else bool(self.commit and re.fullmatch(r"[0-9a-fA-F]{40}", self.commit))
+        )
         return bool(
             self.expression
             and self.name
             and self.source
-            and (
-                self.commit
-                or self.resolved_version
-                or (self.source_type == "local" and self.resolved_ref)
-            )
+            and exact_revision
             and self.target_path
             and all(record.sha256 for record in self.files)
         )
 
-    def matches(self, declaration: GuidelineDeclaration, *, base_dir: Path | None = None) -> bool:
+    def matches(
+        self,
+        declaration: GuidelineDeclaration,
+        *,
+        base_dir: Path | None = None,
+    ) -> bool:
         """Return whether source, revision, selectors, target, and alias match.
 
         Args:
-            declaration: Manifest declaration to compare.
-            base_dir: Optional project base for local identity.
+            declaration:
+                Manifest declaration to compare.
+            base_dir:
+                Optional project base for local identity.
 
         Returns:
             ``True`` only for a declaration-specific lock entry.
@@ -719,19 +805,29 @@ class GuidelinesLockEntry(BaseModel):
 class GuidelinesLock(BaseModel):
     """Versioned neutral ``guidelines.lock.json`` document.
 
+    .. versionchanged:: 0.2.0
+        Lock entries carry deterministic declaration identity and frozen-replay provenance.
+
     Args:
-        version: Document version, retained at ``1``.
-        manager: Neutral manager identity, ``ai-guidelines``.
-        lock_format: Neutral lock format identity, ``ai-guidelines``.
-        lock_format_version: Major lock format version, currently ``1``.
-        manager_version: Version of the manager that generated the document.
-        generated_at: UTC document-generation timestamp.
-        guidelines: Resolved entries in manifest order.
+        version:
+            Document version, retained at ``1``.
+        manager:
+            Neutral manager identity, ``ai-guidelines``.
+        lock_format:
+            Neutral lock format identity, ``ai-guidelines``.
+        lock_format_version:
+            Major lock format version, currently ``1``.
+        manager_version:
+            Version of the manager that generated the document.
+        generated_at:
+            UTC document-generation timestamp.
+        guidelines:
+            Resolved entries in manifest order.
 
     Raises:
         pydantic.ValidationError: If compatibility metadata or entries are invalid.
 
-    Example:
+    Examples:
         >>> GuidelinesLock().lock_format
         'ai-guidelines'
     """
@@ -789,7 +885,10 @@ class GuidelinesLock(BaseModel):
         return _as_utc(value, "generated_at")
 
     def find_entry(
-        self, declaration: GuidelineDeclaration, *, base_dir: Path | None = None
+        self,
+        declaration: GuidelineDeclaration,
+        *,
+        base_dir: Path | None = None,
     ) -> GuidelinesLockEntry | None:
         """Find the first declaration-specific matching entry."""
         return next(
@@ -798,14 +897,20 @@ class GuidelinesLock(BaseModel):
         )
 
     def is_complete_for(
-        self, declaration: GuidelineDeclaration, *, base_dir: Path | None = None
+        self,
+        declaration: GuidelineDeclaration,
+        *,
+        base_dir: Path | None = None,
     ) -> bool:
         """Return whether a matching entry has replay provenance and hashes."""
         entry = self.find_entry(declaration, base_dir=base_dir)
         return bool(entry and entry.is_complete())
 
     def missing_or_incomplete(
-        self, declaration: GuidelineDeclaration, *, base_dir: Path | None = None
+        self,
+        declaration: GuidelineDeclaration,
+        *,
+        base_dir: Path | None = None,
     ) -> GuidelinesLockEntry | None:
         """Return a matching incomplete entry, excluding an absent declaration."""
         entry = self.find_entry(declaration, base_dir=base_dir)

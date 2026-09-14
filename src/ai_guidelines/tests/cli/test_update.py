@@ -9,6 +9,7 @@ from ai_guidelines.update import UpdatePlan, UpdatePlanEntry
 
 
 def _project(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a project and moving local source for update tests."""
     project = tmp_path / "project"
     source = tmp_path / "source"
     project.mkdir()
