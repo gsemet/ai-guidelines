@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -38,6 +39,69 @@ REQUIRED_DOC_PAGES = (
     "docs/source/explanation/apm-comparison.md",
 )
 EXAMPLE_SUFFIXES = (".guideline.md", ".guidelines.md")
+MAINTAINED_PYTHON_DIRECTORIES = (
+    "src/ai_guidelines",
+    ".github/skills/gh-release-notes/scripts",
+)
+DOCSTRING_SECTIONS = {"Args", "Returns", "Raises", "Yields", "Examples", "Attributes"}
+
+
+def _maintained_python_files(project_root: Path) -> list[Path]:
+    """Return maintained Python files covered by the documentation contract."""
+    return sorted(
+        path
+        for relative in MAINTAINED_PYTHON_DIRECTORIES
+        for path in (project_root / relative).rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+def _function_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.arg]:
+    """Return all declared parameters, including variadic parameters."""
+    parameters = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+    if parameters and parameters[0].arg in {"self", "cls"}:
+        parameters = parameters[1:]
+    if node.args.vararg is not None:
+        parameters.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        parameters.append(node.args.kwarg)
+    return parameters
+
+
+def _docstring_issues(
+    docstring: str,
+    path: Path,
+    name: str,
+) -> list[str]:
+    """Return Google-style section and Args formatting violations."""
+    issues: list[str] = []
+    lines = docstring.splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped in {f"{section}:" for section in DOCSTRING_SECTIONS} and line != stripped:
+            issues.append(f"{path}:{name}: section {stripped!r} must be top-level")
+        if stripped == "Args:":
+            for args_line in lines[line_number:]:
+                args_stripped = args_line.strip()
+                if args_stripped in {f"{section}:" for section in DOCSTRING_SECTIONS}:
+                    break
+                if re.match(r"^\s{4}\S[^:]*:\s+\S", args_line):
+                    issues.append(f"{path}:{name}: Args descriptions must be indented below names")
+    return issues
+
+
+def _signature_issues(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    path: Path,
+) -> list[str]:
+    """Return signature-layout violations for functions with many parameters."""
+    parameters = _function_parameters(node)
+    if len(parameters) < 3:
+        return []
+    lines = [parameter.lineno for parameter in parameters]
+    if len(set(lines)) != len(lines) or any(line <= node.lineno for line in lines):
+        return [f"{path}:{node.lineno}: {node.name} parameters must use separate signature lines"]
+    return []
 
 
 def test_required_documents_and_local_links_exist(project_root: Path) -> None:
@@ -57,6 +121,37 @@ def test_required_documents_and_local_links_exist(project_root: Path) -> None:
                 continue
             resolved = (document.parent / target).resolve()
             assert resolved.is_file() or resolved.is_dir(), (document, target)
+
+
+def test_maintained_python_docstrings_follow_repository_guideline(project_root: Path) -> None:
+    """Enforce the maintained-code docstring and signature contract mechanically."""
+    issues: list[str] = []
+    for path in _maintained_python_files(project_root):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if not ast.get_docstring(tree):
+            issues.append(f"{path}: module docstring is required")
+        requires_examples = "/tests/" not in path.as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            docstring = ast.get_docstring(node)
+            if not node.name.startswith("_") and not docstring:
+                issues.append(f"{path}:{node.lineno}: public {node.name} needs a docstring")
+            if docstring:
+                issues.extend(_docstring_issues(docstring, path, node.name))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                issues.extend(_signature_issues(node, path))
+                if (
+                    requires_examples
+                    and not node.name.startswith("_")
+                    and len(_function_parameters(node)) > 2
+                    and (docstring is None or "Examples:" not in docstring)
+                ):
+                    issues.append(
+                        f"{path}:{node.lineno}: {node.name} needs runnable Examples "
+                        "for three-plus parameters"
+                    )
+    assert not issues, "\n".join(issues)
 
 
 def test_diataxis_documentation_quadrants_are_populated(project_root: Path) -> None:

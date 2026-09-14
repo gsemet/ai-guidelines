@@ -74,6 +74,7 @@ def test_manifest_preserves_previous_bytes_when_serialization_fails(
     path.write_bytes(original)
 
     def fail_dump(*args: object, **kwargs: object) -> str:
+        """Inject a YAML serialization failure."""
         raise TypeError("serialization failed")
 
     monkeypatch.setattr("ai_guidelines.manifest.yaml.safe_dump", fail_dump)

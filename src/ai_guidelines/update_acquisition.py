@@ -16,9 +16,33 @@ UpdateRequest = tuple[int, GuidelineDeclaration, SourceLocation]
 
 
 def acquire_update_sources(
-    requests: Sequence[UpdateRequest], *, fetcher: Any, source_stack: ExitStack
+    requests: Sequence[UpdateRequest],
+    *,
+    fetcher: Any,
+    source_stack: ExitStack,
 ) -> dict[int, AcquiredSource]:
-    """Acquire update requests using sparse, content-addressed caching."""
+    """Acquire update requests using sparse, content-addressed caching.
+
+    .. versionadded:: 0.2.0
+
+    Args:
+        requests:
+            Ordered update requests containing declarations and source locations.
+        fetcher:
+            Acquisition facade used for local and remote sources.
+        source_stack:
+            Exit stack that owns the returned acquisition contexts.
+
+    Returns:
+        Acquired sources keyed by their declaration index.
+
+    Examples:
+        >>> with ExitStack() as source_stack:
+        ...     acquire_update_sources(
+        ...         [], fetcher=SourceFetcher(), source_stack=source_stack
+        ...     )
+        {}
+    """
     result: dict[int, AcquiredSource] = {}
     groups: dict[tuple[str | None, str | None], list[UpdateRequest]] = {}
     for request in requests:
@@ -43,16 +67,8 @@ def acquire_update_sources(
                 else None
             )
             if snapshot is not None:
-                source_path = (
-                    snapshot.root / location.relative_path
-                    if location.relative_path != "."
-                    else snapshot.root
-                )
-                resolved_location = (
-                    location.model_copy(update={"kind": "folder"})
-                    if source_path.is_dir() and location.kind != "folder"
-                    else location
-                )
+                source_path = snapshot.path_for(location.relative_path)
+                resolved_location = snapshot.location_for(location)
                 cached[index] = AcquiredSource(
                     location=resolved_location,
                     root=snapshot.root,
@@ -99,6 +115,7 @@ def acquire_update_sources(
                 locations[0],
                 first.root,
                 locations,
+                resolved_locations=[source.location for source in acquired_by_index.values()],
                 resolved_ref=first.resolved_ref,
                 commit=first.commit,
                 reference_kind=first.reference_kind,
@@ -107,27 +124,19 @@ def acquire_update_sources(
             # their final path. Rebuild returned sources from that path;
             # retaining the pre-move checkout would intermittently leave
             # update discovery with a non-existent source directory.
-            acquired_by_index = {
-                index: AcquiredSource(
-                    location=(
-                        source.location.model_copy(update={"kind": "folder"})
-                        if (snapshot.root / source.location.relative_path).is_dir()
-                        and source.location.kind != "folder"
-                        else source.location
-                    ),
+            promoted: dict[int, AcquiredSource] = {}
+            for item, _source in zip(group, acquired_by_index.values(), strict=True):
+                index, _declaration, location = item
+                promoted[index] = AcquiredSource(
+                    location=snapshot.location_for(location),
                     root=snapshot.root,
-                    path=(
-                        snapshot.root
-                        if source.location.relative_path == "."
-                        else snapshot.root.joinpath(*source.location.relative_path.split("/"))
-                    ),
+                    path=snapshot.path_for(location.relative_path),
                     resolved_ref=snapshot.resolved_ref,
                     commit=snapshot.commit,
                     reference_kind=cast(Any, snapshot.reference_kind),
                     temporary=False,
                 )
-                for index, source in acquired_by_index.items()
-            }
+            acquired_by_index = promoted
         result.update(acquired_by_index)
     return result
 

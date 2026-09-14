@@ -326,6 +326,75 @@ def test_incomplete_lock_entries_are_detectable() -> None:
     assert not lock_with_missing_target.is_complete_for(declaration)
 
 
+def test_remote_resolved_version_without_commit_is_not_complete() -> None:
+    """A remote version label cannot replace the exact commit frozen replay needs."""
+    declaration = GuidelineDeclaration(source="https://github.com/example/repo")
+    entry = GuidelinesLockEntry(
+        expression=declaration.source,
+        name=declaration.display_name,
+        source=declaration.canonical_source,
+        source_type="github",
+        resolved_ref="v1.2.3",
+        resolved_version="1.2.3",
+        target_path=".github/guidelines",
+        files=[
+            GuidelineFileRecord(
+                source_path="guide.guidelines.md",
+                target_path=".github/guidelines/guide.guidelines.md",
+                sha256=HASH,
+            )
+        ],
+    )
+
+    assert not entry.is_complete()
+
+
+def test_remote_short_commit_is_not_complete() -> None:
+    """A provider-shortened commit cannot support exact frozen replay."""
+    declaration = GuidelineDeclaration(source="https://github.com/example/repo")
+    entry = GuidelinesLockEntry(
+        expression=declaration.source,
+        name=declaration.display_name,
+        source=declaration.canonical_source,
+        source_type="github",
+        resolved_ref="main",
+        commit=COMMIT[:7],
+        target_path=".github/guidelines",
+        files=[
+            GuidelineFileRecord(
+                source_path="guide.guidelines.md",
+                target_path=".github/guidelines/guide.guidelines.md",
+                sha256=HASH,
+            )
+        ],
+    )
+
+    assert not entry.is_complete()
+
+
+def test_remote_full_commit_with_target_and_hashes_is_complete() -> None:
+    """A full commit plus target and ownership hashes supports frozen replay."""
+    declaration = GuidelineDeclaration(source="https://github.com/example/repo")
+    entry = GuidelinesLockEntry(
+        expression=declaration.source,
+        name=declaration.display_name,
+        source=declaration.canonical_source,
+        source_type="github",
+        resolved_ref="main",
+        commit=COMMIT,
+        target_path=".github/guidelines",
+        files=[
+            GuidelineFileRecord(
+                source_path="guide.guidelines.md",
+                target_path=".github/guidelines/guide.guidelines.md",
+                sha256=HASH,
+            )
+        ],
+    )
+
+    assert entry.is_complete()
+
+
 @pytest.mark.parametrize(
     "field_name",
     ["requested_ref", "resolved_ref", "resolved_version", "semver_constraint", "resolved_tag"],

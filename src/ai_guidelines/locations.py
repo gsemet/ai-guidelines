@@ -35,15 +35,22 @@ _GITHUB_SHORT_FORM = re.compile(r"^[^./~][^/\\]*/[^/\\]+(?:/.*)?$")
 
 
 class LocationParseError(ValueError):
-    """Raised when a source expression is unsupported or unsafe."""
+    """Raised when a source expression is unsupported or unsafe.
+
+    .. versionchanged:: 0.2.0
+        Location parsing now rejects credential-bearing and escaping source
+        expressions before they reach acquisition.
+    """
 
 
 def validate_revision(value: str, *, error_type: type[ValueError] = LocationParseError) -> str:
     """Validate one revision before it becomes a Git argument.
 
     Args:
-        value: Candidate branch, tag, or commit expression.
-        error_type: Exception type raised on rejection.
+        value:
+            Candidate branch, tag, or commit expression.
+        error_type:
+            Exception type raised on rejection.
 
     Returns:
         The decoded, stripped revision.
@@ -55,7 +62,16 @@ def validate_revision(value: str, *, error_type: type[ValueError] = LocationPars
 
 
 class SourceLocation(BaseModel):
-    """Validated identity for a local or remote guideline source."""
+    """Validated identity for a local or remote guideline source.
+
+    The model preserves the requested revision and source-relative selection
+    separately from the canonical repository identity. Remote identities never
+    retain credentials, query strings, or fragments.
+
+    .. versionchanged:: 0.2.0
+        Source locations now validate cross-field identity at acquisition and
+        cache boundaries.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -163,6 +179,17 @@ def validate_source_location(location: SourceLocation) -> SourceLocation:
     validators. Acquisition and cache boundaries therefore reconstruct the
     model and verify that its canonical identity still describes the supplied
     repository or local path.
+
+    Args:
+        location:
+            Source location to reconstruct and cross-check.
+
+    Returns:
+        A freshly validated equivalent source location.
+
+    Raises:
+        LocationParseError:
+            If fields are inconsistent or contain an unsafe identity.
     """
     try:
         validated = SourceLocation.model_validate(location.model_dump())
@@ -191,6 +218,32 @@ def validate_source_location(location: SourceLocation) -> SourceLocation:
         return validated
     except (AttributeError, OSError, TypeError, ValueError):
         raise LocationParseError("source location is unsafe or inconsistent") from None
+
+
+def replace_source_location(location: SourceLocation, **updates: object) -> SourceLocation:
+    """Return a freshly validated location with selected fields replaced.
+
+    Args:
+        location:
+            Existing source location to copy.
+        updates:
+            Field values to replace before validation.
+
+    Returns:
+        A new source location whose cross-field identity has been revalidated.
+
+    Raises:
+        LocationParseError:
+            If the replacement would make the location unsafe or inconsistent.
+    """
+    if not isinstance(location, SourceLocation):
+        raise TypeError("location must be a SourceLocation")
+    payload = location.model_dump()
+    payload.update(updates)
+    try:
+        return validate_source_location(SourceLocation.model_validate(payload))
+    except (TypeError, ValueError):
+        raise LocationParseError("source location replacement is unsafe or inconsistent") from None
 
 
 def _validate_fragment_expression(fragment: str) -> None:
@@ -286,7 +339,10 @@ def _make_remote_location(
 
 
 def _parse_gitlab_url(
-    expression: str, parsed: SplitResult, scheme: str, path: str
+    expression: str,
+    parsed: SplitResult,
+    scheme: str,
+    path: str,
 ) -> SourceLocation:
     """Parse a GitLab ``/-/blob`` or ``/-/tree`` URL."""
     repository_path, remainder = path.split("/-/", 1)
@@ -462,13 +518,10 @@ def _parse_local(expression: str, base_dir: Path | None) -> SourceLocation:
     raw_path = Path(expression).expanduser()
     if not raw_path.is_absolute() and ".." in raw_path.parts:
         raise LocationParseError("local location must not contain traversal")
-    if not raw_path.is_absolute():
-        root = resolve_source_base(base_dir)
-        current = root
-        for component in raw_path.parts:
-            current /= component
-            if current.is_symlink():
-                raise LocationParseError("local location must not escape through a symlink")
+    if (not raw_path.is_absolute() and (resolve_source_base(base_dir) / raw_path).is_symlink()) or (
+        raw_path.is_absolute() and raw_path.is_symlink()
+    ):
+        raise LocationParseError("local location must not escape through a symlink source root")
     local_path = resolve_local_source_path(expression, base_dir)
     if local_path.exists():
         kind: LocationKind = "file" if local_path.is_file() else "folder"
@@ -496,7 +549,32 @@ def parse_location(
     ref: str | None = None,
     base_dir: Path | None = None,
 ) -> SourceLocation:
-    """Parse a supported local, Git, GitHub, or GitLab source expression."""
+    """Parse a supported local, Git, GitHub, or GitLab source expression.
+
+    .. versionchanged:: 0.2.0
+        Provider URLs, compact repository paths, and local paths share one
+        validated source-location contract.
+
+    Args:
+        expression:
+            Local path, provider URL, Git URL, or short GitHub expression.
+        ref:
+            Optional revision override applied after parsing the expression.
+        base_dir:
+            Base directory for relative local paths.
+
+    Returns:
+        A validated, canonical source location.
+
+    Raises:
+        LocationParseError:
+            If the expression, revision, or local containment is unsafe.
+
+    Examples:
+        >>> location = parse_location("github/example/repo#main:guidelines")
+        >>> (location.source_type, location.requested_ref, location.relative_path)
+        ('github', 'main', 'guidelines')
+    """
     if not isinstance(expression, str) or not expression:
         raise LocationParseError("location must be a non-empty string")
     if has_control_characters(expression):
@@ -518,7 +596,10 @@ def parse_location(
             else:
                 raise LocationParseError("location must identify a supported repository or path")
         if ref is not None:
-            location = location.model_copy(update={"requested_ref": validate_revision(ref)})
+            location = replace_source_location(
+                location,
+                requested_ref=validate_revision(ref),
+            )
         return location
     except LocationParseError:
         raise
@@ -532,32 +613,82 @@ def with_source_path(
     *,
     kind: LocationKind | None = None,
 ) -> SourceLocation:
-    """Return a remote location scoped to one safe repository path."""
+    """Return a location scoped to one safe repository or local path.
+
+    Args:
+        location:
+            Validated source location whose selection should be replaced.
+        relative_path:
+            Literal path relative to the repository or local source root.
+        kind:
+            Optional explicit file or folder classification.
+
+    Returns:
+        A freshly validated location preserving the source identity and
+        requested revision.
+
+    Raises:
+        LocationParseError:
+            If the path escapes its source root or makes the identity
+            inconsistent.
+
+    Examples:
+        >>> source = parse_location("github/example/repo#main:guidelines")
+        >>> with_source_path(source, "python").relative_path
+        'python'
+    """
     normalized = _normalize_relative_path(relative_path)
     if location.source_type == "local":
         if location.local_path is None:
             raise LocationParseError("local source path is unavailable")
-        local_path = (location.local_path / normalized).resolve(strict=False)
-        return location.model_copy(
-            update={
-                "relative_path": normalized,
-                "kind": "file",
+        source_root = (
+            location.local_path if location.kind == "folder" else location.local_path.parent
+        )
+        candidate = (
+            source_root if normalized == "." else source_root.joinpath(*normalized.split("/"))
+        )
+        try:
+            resolved_root = source_root.resolve(strict=False)
+            local_path = candidate.resolve(strict=False)
+            if not local_path.is_relative_to(resolved_root):
+                raise LocationParseError("local source path must remain within its source root")
+        except OSError:
+            raise LocationParseError("local source path could not be resolved safely") from None
+        if local_path.exists():
+            selected_kind: LocationKind = "file" if local_path.is_file() else "folder"
+        else:
+            selected_kind = kind or (
+                "file"
+                if local_path.suffix or normalized.endswith((".guideline.md", ".guidelines.md"))
+                else "folder"
+            )
+        data = location.model_dump()
+        data.update(
+            {
+                "relative_path": local_path.name if selected_kind == "file" else ".",
+                "kind": selected_kind,
                 "canonical_source": local_path.as_posix(),
                 "local_path": local_path,
             }
         )
+        try:
+            return validate_source_location(SourceLocation.model_validate(data))
+        except (TypeError, ValueError):
+            raise LocationParseError("local source path could not be validated safely") from None
     if location.repository is None:
         raise LocationParseError("source path overrides require a remote repository")
     selected_kind = kind or ("folder" if relative_path.endswith(("/", "\\")) else "file")
     canonical = location.repository if normalized == "." else f"{location.repository}/{normalized}"
     try:
-        return SourceLocation.model_validate(
-            {
-                **location.model_dump(),
-                "relative_path": normalized,
-                "kind": selected_kind,
-                "canonical_source": canonical,
-            }
+        return validate_source_location(
+            SourceLocation.model_validate(
+                {
+                    **location.model_dump(),
+                    "relative_path": normalized,
+                    "kind": selected_kind,
+                    "canonical_source": canonical,
+                }
+            )
         )
     except (TypeError, ValueError) as error:
         raise LocationParseError("source path could not be validated safely") from error

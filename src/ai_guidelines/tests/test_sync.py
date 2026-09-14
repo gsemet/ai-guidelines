@@ -29,7 +29,9 @@ def _write(path: Path, content: str) -> None:
 
 
 def _manifest(
-    project: Path, *declarations: GuidelineDeclaration, default: str | None = None
+    project: Path,
+    *declarations: GuidelineDeclaration,
+    default: str | None = None,
 ) -> None:
     """Persist a test manifest."""
     save_manifest(
@@ -41,13 +43,23 @@ def _manifest(
 class FakeFetcher:
     """Return a deterministic remote materialization without network access."""
 
-    def __init__(self, source_root: Path, commit: str = "a" * 40) -> None:
+    def __init__(
+        self,
+        source_root: Path,
+        commit: str = "a" * 40,
+    ) -> None:
+        """Initialize the fake source root and reported commit."""
         self.source_root = source_root
         self.commit = commit
         self.requested_refs: list[str | None] = []
 
     @contextmanager
-    def acquire_many(self, locations, *, sparse_patterns=None) -> Iterator[list[AcquiredSource]]:
+    def acquire_many(
+        self,
+        locations,
+        *,
+        sparse_patterns=None,
+    ) -> Iterator[list[AcquiredSource]]:
         """Yield one acquired source per requested location."""
         del sparse_patterns
         self.requested_refs.extend(location.requested_ref for location in locations)
@@ -218,7 +230,11 @@ def test_frozen_missing_state_fails_before_acquisition_or_writes(tmp_path: Path)
     class FailingFetcher:
         """Fail the test if frozen mode attempts acquisition."""
 
-        def acquire_many(self, *_args, **_kwargs):
+        def acquire_many(
+            self,
+            *_args,
+            **_kwargs,
+        ):
             """Make forbidden source acquisition observable."""
             raise AssertionError("frozen mode acquired a source")
 
@@ -320,7 +336,7 @@ def test_moving_branch_refreshes_lock_provenance(tmp_path: Path) -> None:
 
 
 def test_lock_publication_failure_preserves_previous_lock(tmp_path: Path, monkeypatch) -> None:
-    """Atomic lock failure retains prior bytes while files may already change."""
+    """Atomic lock failure restores the previous lock and managed files."""
     project = tmp_path / "project"
     project.mkdir()
     source = project / "source"
@@ -340,7 +356,7 @@ def test_lock_publication_failure_preserves_previous_lock(tmp_path: Path, monkey
 
     assert (project / "guidelines.lock.json").read_bytes() == old_lock
     assert (project / ".github/guidelines/team.guidelines.md").read_text(encoding="utf-8") == (
-        "new\n"
+        "old\n"
     )
 
 

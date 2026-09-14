@@ -19,11 +19,17 @@ GUIDELINE_SUFFIXES = (".guideline.md", ".guidelines.md")
 
 
 class DiscoveryError(RuntimeError):
-    """Raised when acquired guideline material cannot be inspected safely."""
+    """Raised when acquired guideline material cannot be inspected safely.
+
+    .. versionadded:: 0.2.0
+    """
 
 
 class DiscoveredGuideline(BaseModel):
-    """One source-relative guideline candidate and optional metadata."""
+    """One source-relative guideline candidate and optional metadata.
+
+    .. versionadded:: 0.2.0
+    """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True, frozen=True)
 
@@ -47,7 +53,10 @@ class DiscoveredGuideline(BaseModel):
 
 
 class DiscoveryResult(BaseModel):
-    """Validated discovery output and non-fatal selection warnings."""
+    """Validated discovery output and non-fatal selection warnings.
+
+    .. versionadded:: 0.2.0
+    """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True, frozen=True)
 
@@ -206,7 +215,11 @@ def _source_candidates(source: AcquiredSource) -> tuple[list[Path], list[str]]:
     return candidates, relative_paths
 
 
-def _warning(source: AcquiredSource, pattern: str | None, paths: Sequence[str] | None) -> str:
+def _warning(
+    source: AcquiredSource,
+    pattern: str | None,
+    paths: Sequence[str] | None,
+) -> str:
     """Build a warning that omits sensitive source internals."""
     if paths is not None:
         selection = f" matching paths {list(paths)!r}"
@@ -223,7 +236,41 @@ def discover_guidelines(
     pattern: str | None = None,
     paths: Sequence[str] | None = None,
 ) -> DiscoveryResult:
-    """Recursively discover exact guideline suffixes from one acquired source."""
+    """Recursively discover exact guideline suffixes from one acquired source.
+
+    .. versionchanged:: 0.2.0
+        Discovery rejects unsafe selectors and preserves source-relative paths.
+
+    Args:
+        source:
+            Acquired local or remote source to inspect.
+        pattern:
+            Optional filename-stem glob.
+        paths:
+            Optional source-relative selectors.
+
+    Returns:
+        Discovered candidates and non-fatal selection warnings.
+
+    Raises:
+        DiscoveryError:
+            If the acquired source is missing, unsafe, or not a file or folder.
+        ValueError:
+            If a selector is unsafe.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> from ai_guidelines.locations import parse_location
+        >>> with TemporaryDirectory() as directory:
+        ...     root = Path(directory)
+        ...     path = root / "team.guideline.md"
+        ...     _ = path.write_text("# Team\\n", encoding="utf-8")
+        ...     source = AcquiredSource(
+        ...         location=parse_location(str(path)), root=root, path=path
+        ...     )
+        ...     discover_guidelines(source).files[0].source_path
+        'team.guideline.md'
+    """
     _validate_pattern(pattern)
     _validate_paths(paths)
     if not source.path.exists():
@@ -252,6 +299,58 @@ def discover_guidelines(
         warnings.append(message)
         logger.warning(message)
     return DiscoveryResult(files=discovered, warnings=warnings)
+
+
+def filter_guidelines(
+    result: DiscoveryResult,
+    *,
+    pattern: str | None = None,
+    paths: Sequence[str] | None = None,
+) -> DiscoveryResult:
+    """Apply declaration selectors to an already discovered result.
+
+    .. versionchanged:: 0.2.0
+        Filtering supports the same plural selectors as initial discovery.
+
+    Args:
+        result:
+            Discovery result containing source-relative candidates.
+        pattern:
+            Optional filename-stem glob.
+        paths:
+            Optional plural source selectors.
+
+    Returns:
+        A filtered result that preserves the original discovery warnings.
+
+    Raises:
+        ValueError:
+            If a selector is unsafe.
+
+    Examples:
+        >>> candidate = DiscoveredGuideline(
+        ...     path=Path("team.guideline.md"),
+        ...     source_path="team.guideline.md",
+        ...     suffix_stripped_name="team",
+        ... )
+        >>> result = filter_guidelines(
+        ...     DiscoveryResult(files=[candidate]), pattern="team"
+        ... )
+        >>> result.files[0].source_path
+        'team.guideline.md'
+    """
+    _validate_pattern(pattern)
+    _validate_paths(paths)
+    selected = [
+        candidate
+        for candidate in result.files
+        if (pattern is None or _pattern_matches(Path(candidate.source_path), pattern))
+        and (
+            paths is None
+            or any(_selector_matches(candidate.source_path, selector) for selector in paths)
+        )
+    ]
+    return DiscoveryResult(files=selected, warnings=list(result.warnings))
 
 
 GuidelineCandidate = DiscoveredGuideline

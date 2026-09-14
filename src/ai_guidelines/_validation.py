@@ -53,7 +53,8 @@ def has_control_characters(value: str) -> bool:
     """Return whether a string contains C0 control characters or ``DEL``.
 
     Args:
-        value: Candidate string.
+        value:
+            Candidate string.
 
     Returns:
         ``True`` when at least one non-printable character is present.
@@ -65,7 +66,8 @@ def is_credential_query_key(key: str) -> bool:
     """Return whether a query key commonly carries a credential.
 
     Args:
-        key: Raw query-string key.
+        key:
+            Raw query-string key.
 
     Returns:
         ``True`` when the normalized key is a known credential key or contains
@@ -86,12 +88,18 @@ def validate_fragment_expression(
     """Reject credential-like key/value data embedded in a URL fragment.
 
     Args:
-        fragment: Raw or percent-encoded fragment.
-        error_type: Exception type raised on rejection.
-        subject: Noun used in error messages.
+        fragment:
+            Raw or percent-encoded fragment.
+        error_type:
+            Exception type raised on rejection.
+        subject:
+            Noun used in error messages.
 
     Raises:
         ValueError: Of ``error_type``, when the fragment is unsafe.
+
+    Examples:
+        >>> validate_fragment_expression("section")
     """
     decoded = unquote(fragment)
     if has_control_characters(decoded):
@@ -115,12 +123,18 @@ def validate_remote_expression(
     because ``git`` is a conventional transport user, not a secret.
 
     Args:
-        expression: Candidate remote URL or SCP-style expression.
-        error_type: Exception type raised on rejection.
-        subject: Noun used in error messages.
+        expression:
+            Candidate remote URL or SCP-style expression.
+        error_type:
+            Exception type raised on rejection.
+        subject:
+            Noun used in error messages.
 
     Raises:
         ValueError: Of ``error_type``, when the expression is unsafe or malformed.
+
+    Examples:
+        >>> validate_remote_expression("https://example.com/team/repo")
     """
     if has_control_characters(expression):
         raise error_type(f"{subject} must contain printable characters")
@@ -148,12 +162,18 @@ def validate_remote_field(
     """Validate credentials only when a field actually looks remote.
 
     Args:
-        value: Candidate field value.
-        error_type: Exception type raised on rejection.
-        subject: Noun used in error messages.
+        value:
+            Candidate field value.
+        error_type:
+            Exception type raised on rejection.
+        subject:
+            Noun used in error messages.
 
     Raises:
         ValueError: Of ``error_type``, when a remote value is unsafe.
+
+    Examples:
+        >>> validate_remote_field("https://example.com/team/repo")
     """
     candidate = value.strip()
     parsed = urlsplit(candidate)
@@ -165,7 +185,8 @@ def source_type_for_host(host: str) -> SourceType:
     """Classify a host while retaining a generic Git fallback.
 
     Args:
-        host: Hostname, optionally with a port.
+        host:
+            Hostname, optionally with a port.
 
     Returns:
         ``"github"``, ``"gitlab"``, or ``"git"``.
@@ -182,8 +203,10 @@ def validate_revision(value: str, *, error_type: type[ValueError] = ValueError) 
     """Validate one revision before it becomes a Git argument.
 
     Args:
-        value: Candidate branch, tag, or commit expression.
-        error_type: Exception type raised on rejection.
+        value:
+            Candidate branch, tag, or commit expression.
+        error_type:
+            Exception type raised on rejection.
 
     Returns:
         The decoded, stripped revision.

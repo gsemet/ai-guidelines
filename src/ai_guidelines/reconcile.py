@@ -36,7 +36,12 @@ from ai_guidelines.paths import (
 
 
 class ReconciliationError(RuntimeError):
-    """Raised when mapping or safe reconciliation cannot proceed."""
+    """Raised when mapping or safe reconciliation cannot proceed.
+
+    .. versionchanged:: 0.2.0
+        Reconciliation validates both source and target containment before
+        writing managed files.
+    """
 
 
 class DestinationCollisionError(ReconciliationError):
@@ -45,6 +50,121 @@ class DestinationCollisionError(ReconciliationError):
 
 class UnsafeSourcePathError(ReconciliationError):
     """Raised when a discovered source file leaves its acquired root."""
+
+
+@dataclass(frozen=True)
+class _FileSnapshot:
+    """One filesystem state captured before a coordinated operation."""
+
+    path: Path
+    existed: bool
+    content: bytes | None = None
+    link_target: str | None = None
+    link_is_directory: bool = False
+    mode: int | None = None
+
+
+class ReconciliationJournal:
+    """Capture and restore project files across a multi-step publication."""
+
+    def __init__(self, project_root: Path | str) -> None:
+        """Create a rollback journal rooted at one consumer project.
+
+        Args:
+            project_root:
+                Project boundary used when cleaning operation-created folders.
+        """
+        self.project_root = Path(project_root).expanduser().resolve()
+        self._snapshots: dict[Path, _FileSnapshot] = {}
+        self._existing_directories: set[Path] = set()
+
+    def capture(self, paths: Iterable[Path]) -> None:
+        """Record each file path before the first operation can mutate it."""
+        for raw_path in paths:
+            path = Path(raw_path)
+            if path in self._snapshots:
+                continue
+            self._record_directories(path)
+            try:
+                if path.is_symlink():
+                    self._snapshots[path] = _FileSnapshot(
+                        path=path,
+                        existed=True,
+                        link_target=path.readlink().as_posix(),
+                        link_is_directory=path.is_dir(),
+                    )
+                elif path.exists():
+                    if not path.is_file():
+                        raise ReconciliationError("journal can only capture guideline files")
+                    self._snapshots[path] = _FileSnapshot(
+                        path=path,
+                        existed=True,
+                        content=path.read_bytes(),
+                        mode=path.stat().st_mode & 0o777,
+                    )
+                else:
+                    self._snapshots[path] = _FileSnapshot(path=path, existed=False)
+            except OSError:
+                raise ReconciliationError("guideline state could not be journaled safely") from None
+
+    def rollback(self) -> None:
+        """Restore every captured path and remove operation-created directories."""
+        try:
+            for snapshot in self._snapshots.values():
+                _remove_path(snapshot.path)
+                if not snapshot.existed:
+                    continue
+                snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+                if snapshot.link_target is not None:
+                    snapshot.path.symlink_to(
+                        snapshot.link_target,
+                        target_is_directory=snapshot.link_is_directory,
+                    )
+                else:
+                    atomic.atomic_write(snapshot.path, snapshot.content or b"")
+                    if snapshot.mode is not None:
+                        snapshot.path.chmod(snapshot.mode)
+            self._remove_created_directories()
+        except OSError:
+            raise ReconciliationError("guideline state rollback could not be completed") from None
+
+    def commit(self) -> None:
+        """Discard captured state after all coordinated publications succeed."""
+        self._snapshots.clear()
+        self._existing_directories.clear()
+
+    def _record_directories(self, path: Path) -> None:
+        """Remember existing parents so rollback can remove only new folders."""
+        current = path.parent
+        while current != current.parent:
+            if current.exists():
+                self._existing_directories.add(current)
+            current = current.parent
+
+    def _remove_created_directories(self) -> None:
+        """Remove empty directories created below the project root."""
+        candidates: set[Path] = set()
+        for path in self._snapshots:
+            current = path.parent
+            while current != current.parent and current.is_relative_to(self.project_root):
+                candidates.add(current)
+                current = current.parent
+        for directory in sorted(candidates, key=lambda item: len(item.parts), reverse=True):
+            if directory in self._existing_directories:
+                continue
+            try:
+                directory.rmdir()
+            except OSError:
+                continue
+
+
+def _remove_path(path: Path) -> None:
+    """Remove a journaled file or symlink without following the link."""
+    try:
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+    except OSError:
+        raise ReconciliationError("guideline state could not be restored safely") from None
 
 
 @dataclass(frozen=True)
@@ -70,7 +190,11 @@ class MappedGuideline(BaseModel):
 
 
 class DestinationMap(BaseModel):
-    """Complete validated destination map produced before any writes."""
+    """Complete validated destination map produced before any writes.
+
+    The map contains source bytes and ownership hashes so reconciliation can
+    plan and apply the same file actions without rereading an acquired tree.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True, extra="forbid")
 
@@ -81,11 +205,27 @@ class DestinationMap(BaseModel):
 
     @property
     def destinations(self) -> dict[str, MappedGuideline]:
-        """Return project-relative target paths keyed by destination."""
+        """Return project-relative target paths keyed by destination.
+
+        Returns:
+            A new mapping from normalized target path to mapped source file.
+        """
         return {item.target_path: item for item in self.files}
 
     def for_batch(self, batch_index: int) -> DestinationMap:
-        """Return one ordered preflight batch without rereading source content."""
+        """Return one ordered preflight batch without rereading source content.
+
+        Args:
+            batch_index:
+                Zero-based source-batch index.
+
+        Returns:
+            A destination map containing only that batch's files and warnings.
+
+        Raises:
+            IndexError:
+                If the batch index is not present.
+        """
         selected = self._files_by_batch_index.get(batch_index)
         if selected is None:
             raise IndexError("destination map batch index is out of range")
@@ -96,7 +236,11 @@ class DestinationMap(BaseModel):
 
 
 class ReconciliationResult(BaseModel):
-    """Structured file actions, ownership records, and safety warnings."""
+    """Structured file actions, ownership records, and safety warnings.
+
+    ``managed_files`` records the hashes that the next reconciliation uses to
+    distinguish source-owned files from local edits.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -217,7 +361,11 @@ def _target_context(project_root: Path, target_path: str | None) -> tuple[Path, 
     return target, target_is_folder(target_path, project_root)
 
 
-def _destination_from_context(source_path: str, target: Path, folder_target: bool) -> Path:
+def _destination_from_context(
+    source_path: str,
+    target: Path,
+    folder_target: bool,
+) -> Path:
     """Map a safe source-relative path using the flattening policy."""
     normalized_source = _safe_relative(source_path, "source path")
     if folder_target:
@@ -232,6 +380,10 @@ def resolve_guideline_destination(
 ) -> GuidelineDestination:
     """Resolve one discovered source path to a contained project destination.
 
+    .. versionchanged:: 0.2.0
+        Destination resolution validates existing symlink components before a
+        path is returned.
+
     Args:
         project_root:
             Consumer project root.
@@ -242,6 +394,19 @@ def resolve_guideline_destination(
 
     Returns:
         The destination path, its target root, and whether it is a folder target.
+
+    Raises:
+        ReconciliationError:
+            If the source or target path is unsafe.
+
+    Examples:
+        >>> destination = resolve_guideline_destination(
+        ...     "/tmp/project", "python.guideline.md", "guidelines"
+        ... )
+        >>> destination.path.resolve() == Path(
+        ...     "/tmp/project/guidelines/python.guidelines.md"
+        ... ).resolve()
+        True
     """
     root = Path(project_root).expanduser().resolve()
     target, folder_target = _target_context(root, target_path)
@@ -326,6 +491,10 @@ def build_destination_map(
 ) -> DestinationMap:
     """Build a complete collision-checked map without writing project state.
 
+    .. versionchanged:: 0.2.0
+        Mapping accepts one source or a batch sequence and resolves singular /
+        plural guideline suffix collisions deterministically.
+
     Args:
         project_root:
             Project containment boundary.
@@ -344,6 +513,25 @@ def build_destination_map(
             If independent files share a destination.
         ReconciliationError:
             If paths or target mappings are unsafe.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> from ai_guidelines.locations import parse_location
+        >>> with TemporaryDirectory() as directory:
+        ...     root = Path(directory)
+        ...     project = root / "project"
+        ...     source_root = root / "source"
+        ...     project.mkdir()
+        ...     source_root.mkdir()
+        ...     source = AcquiredSource(
+        ...         location=parse_location(str(source_root)),
+        ...         root=source_root,
+        ...         path=source_root,
+        ...         reference_kind="local",
+        ...         resolved_ref="working-tree",
+        ...     )
+        ...     build_destination_map(project, source, []).files
+        []
     """
     root = Path(project_root).expanduser().resolve()
     mapped: list[MappedGuideline] = []
@@ -483,13 +671,72 @@ def reconcile_source(
     metadata_writer: Callable[[ReconciliationResult], None] | None = None,
     operation_events: list[str] | None = None,
     destination_map: DestinationMap | None = None,
+    journal: ReconciliationJournal | None = None,
 ) -> ReconciliationResult:
     """Apply one source map using recorded managed-content hashes.
+
+    .. versionchanged:: 0.2.0
+        Reconciliation can consume a precomputed destination map and rollback
+        journal while preserving locally edited files.
 
     Normal operations warn and overwrite desired files whose current content
     differs from the recorded ownership hash.  Stale files are removed only
     when their current content still matches that hash.  ``dry_run`` computes
     the same actions without taking a lock or writing any file.
+
+    Args:
+        project_root:
+            Consumer project root.
+        source:
+            Acquired source whose discovered files are being reconciled.
+        files:
+            Discovered guideline files in source-relative form.
+        lock_entry:
+            Previous ownership record for this source, if any.
+        declaration:
+            Optional declaration that must match the previous lock identity.
+        base_dir:
+            Base directory used when comparing declaration source identity.
+        target_path:
+            Optional effective project-relative target.
+        dry_run:
+            Compute actions without writing or taking an operation lock.
+        operation_lock_held:
+            Whether the caller already owns the project operation lock.
+        metadata_writer:
+            Optional callback invoked after file operations are applied.
+        operation_events:
+            Optional list receiving a ``"files"`` event after journaling.
+        destination_map:
+            Optional preflight map whose bytes and hashes are reused.
+        journal:
+            Optional rollback journal for coordinated publication.
+
+    Returns:
+        File actions and the next managed-file ownership records.
+
+    Raises:
+        ReconciliationError:
+            If source identity, paths, hashes, or publication state is unsafe.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> from ai_guidelines.locations import parse_location
+        >>> with TemporaryDirectory() as directory:
+        ...     root = Path(directory)
+        ...     project = root / "project"
+        ...     source_root = root / "source"
+        ...     project.mkdir()
+        ...     source_root.mkdir()
+        ...     source = AcquiredSource(
+        ...         location=parse_location(str(source_root)),
+        ...         root=source_root,
+        ...         path=source_root,
+        ...         reference_kind="local",
+        ...         resolved_ref="working-tree",
+        ...     )
+        ...     reconcile_source(project, source, [], dry_run=True).actions["added"]
+        []
     """
     project = Path(project_root).expanduser().resolve()
     if declaration is not None:
@@ -630,6 +877,13 @@ def reconcile_source(
 
     def apply_operations() -> None:
         """Apply file actions while the caller owns the operation lock."""
+        if journal is not None:
+            journal.capture(
+                [
+                    *(project / Path(item.target_path) for item in writes),
+                    *removals,
+                ]
+            )
         if operation_events is not None:
             operation_events.append("files")
         for item in writes:

@@ -7,6 +7,7 @@ from ai_guidelines.sparse import selector_sparse_patterns
 
 
 def test_plural_selectors_expand_to_files_and_folders() -> None:
+    """Expand plural selectors into literal sparse-checkout patterns."""
     declaration = GuidelineDeclaration(
         source="github/example/repo", paths=["guidelines/engineering/team"]
     )
@@ -20,6 +21,7 @@ def test_plural_selectors_expand_to_files_and_folders() -> None:
 
 
 def test_legacy_pattern_and_location_only_remain_distinct() -> None:
+    """Keep legacy patterns separate from declarations without selectors."""
     pattern = GuidelineDeclaration(source="github/example/repo", pattern="python_*")
     location = GuidelineDeclaration(source="github/example/repo")
 
