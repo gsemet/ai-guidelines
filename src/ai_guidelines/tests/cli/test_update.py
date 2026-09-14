@@ -5,6 +5,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from ai_guidelines.cli import guidelines
+from ai_guidelines.lockfile import load_lockfile, save_lockfile
 from ai_guidelines.update import UpdatePlan, UpdatePlanEntry
 
 
@@ -54,6 +55,27 @@ def test_update_default_applies_and_reports_no_change_on_replay(
     assert "Update complete" in first.output
     assert "No guideline updates are available." in second.output
     assert (project / "guidelines.lock.json").exists()
+
+
+def test_update_consolidates_historical_lock_entries_without_source_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Repair duplicate lock entries even when the source itself is unchanged."""
+    project, _source = _project(tmp_path)
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+
+    first = runner.invoke(guidelines, ["update"])
+    assert first.exit_code == 0
+    lock_path = project / "guidelines.lock.json"
+    lock = load_lockfile(lock_path)
+    save_lockfile(lock_path, lock.model_copy(update={"guidelines": lock.guidelines * 2}))
+
+    repaired = runner.invoke(guidelines, ["update"])
+
+    assert repaired.exit_code == 0, repaired.output
+    assert "historical entries will be consolidated" in repaired.output
+    assert len(load_lockfile(lock_path).guidelines) == 1
 
 
 def test_update_reports_clone_cache_base_path(tmp_path: Path, monkeypatch) -> None:

@@ -446,6 +446,37 @@ def test_apply_preserves_unpinned_source_identity(tmp_path: Path) -> None:
     assert second_plan.entries[0].group == "unchanged"
 
 
+def test_apply_consolidates_lock_entries_after_selector_change(tmp_path: Path) -> None:
+    """Replace historical lock entries when a declaration gains a selector."""
+    project, source = tmp_path / "project", tmp_path / "source"
+    project.mkdir()
+    _write(source / "team.guidelines.md", "team\n")
+    fetcher = FakeFetcher(source, "a" * 40)
+    _manifest(project, GuidelineDeclaration(source=str(source), ref="main"))
+
+    from ai_guidelines.lockfile import load_lockfile
+    from ai_guidelines.update import apply_update_plan
+
+    first_plan = build_update_plan(project, fetcher=fetcher)
+    apply_update_plan(project, first_plan, fetcher=fetcher)
+    _manifest(
+        project,
+        GuidelineDeclaration(
+            source=str(source),
+            ref="main",
+            path="team.guidelines.md",
+        ),
+    )
+
+    second_plan = build_update_plan(project, fetcher=fetcher)
+    assert second_plan.lockfile_needs_rewrite
+    apply_update_plan(project, second_plan, fetcher=fetcher)
+
+    lock = load_lockfile(project / "guidelines.lock.json")
+    assert len(lock.guidelines) == 1
+    assert lock.guidelines[0].path == "team.guidelines.md"
+
+
 def test_update_sources_use_published_cache_path_after_snapshot_move(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

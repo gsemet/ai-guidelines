@@ -201,12 +201,14 @@ class UpdatePlan(BaseModel):
 
     .. versionchanged:: 0.2.0
         Reviewed plans are immutable and bind declaration, manifest, and lock
-        fingerprints before application.
+        fingerprints before application.  Plans also identify stale lock entries
+        that need consolidation even when source files are unchanged.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     entries: list[UpdatePlanEntry] = Field(default_factory=list)
     manifest_fingerprint: str = ""
+    lockfile_needs_rewrite: bool = False
     # Planning always performs a dry run: no project or cache state is written.
     dry_run: bool = True
 
@@ -250,6 +252,11 @@ class UpdatePlan(BaseModel):
     def has_changes(self) -> bool:
         """Return whether applying the plan would change project files."""
         return any(self.groups[name] for name in ("added", "updated", "removed"))
+
+    @property
+    def requires_application(self) -> bool:
+        """Return whether source changes or lockfile consolidation require application."""
+        return self.has_changes or self.lockfile_needs_rewrite
 
 
 class GuidelineUpdateResult(BaseModel):
@@ -333,6 +340,15 @@ def _target(
         default_target_path=default,
     )
     return target.relative_to(project).as_posix()
+
+
+def _matching_entries(
+    project: Path,
+    declarations: list[GuidelineDeclaration],
+    lockfile: GuidelinesLock,
+) -> list[GuidelinesLockEntry | None]:
+    """Return the existing lock entry selected for each manifest declaration."""
+    return [lockfile.find_entry(declaration, base_dir=project) for declaration in declarations]
 
 
 def _identities(
@@ -493,6 +509,10 @@ def build_update_plan(
     contexts: dict[int, tuple[Any, Any, Any, str]] = {}
     entries: dict[int, UpdatePlanEntry] = {}
     identities = _identities(project, declarations, lock, default)
+    matching_entries = _matching_entries(project, declarations, lock)
+    lockfile_needs_rewrite = [
+        entry for entry in matching_entries if entry is not None
+    ] != lock.guidelines
     for index, declaration in enumerate(declarations):
         location, previous = (
             _location(declaration, project),
@@ -566,6 +586,7 @@ def build_update_plan(
     return UpdatePlan(
         entries=ordered_entries,
         manifest_fingerprint=manifest_fingerprint(identities, lock),
+        lockfile_needs_rewrite=lockfile_needs_rewrite,
     )
 
 
@@ -644,7 +665,11 @@ def apply_update_plan(
                         "rerun the update"
                     )
                 planned_locations[index] = location
-            if not plan.has_changes:
+            matching_entries = _matching_entries(project, declarations, existing)
+            lockfile_needs_rewrite = [
+                entry for entry in matching_entries if entry is not None
+            ] != existing.guidelines
+            if not plan.has_changes and not lockfile_needs_rewrite:
                 return GuidelineUpdateResult(plan=plan, lockfile=existing)
             requests = []
             for index, declaration in enumerate(declarations):
@@ -658,7 +683,11 @@ def apply_update_plan(
                         )
                     requests.append((index, declaration, location))
             journal.capture([project / "guidelines.lock.json"])
-            acquired = acquire_update_sources(requests, fetcher=active, source_stack=stack)
+            acquired = (
+                acquire_update_sources(requests, fetcher=active, source_stack=stack)
+                if requests
+                else {}
+            )
             current_declarations, current_existing, current_default = _inputs(project, None, None)
             current_identities = _identities(
                 project, current_declarations, current_existing, current_default
@@ -667,7 +696,9 @@ def apply_update_plan(
                 raise GuidelineUpdateError(
                     "reviewed update plan became stale during acquisition; rerun the update"
                 )
-            next_entries = list(existing.guidelines)
+            next_entries_by_index = {
+                index: entry for index, entry in enumerate(matching_entries) if entry is not None
+            }
             reconciliations = []
             for index, declaration, _source_location in requests:
                 planned, source = plan.entries[index], acquired[index]
@@ -708,10 +739,12 @@ def apply_update_plan(
                     target_path=target,
                     previous=previous,
                 )
-                if previous:
-                    next_entries = [entry if item is previous else item for item in next_entries]
-                else:
-                    next_entries.append(entry)
+                next_entries_by_index[index] = entry
+            next_entries = [
+                next_entries_by_index[index]
+                for index in range(len(declarations))
+                if index in next_entries_by_index
+            ]
             next_lock = GuidelinesLock(guidelines=next_entries)
             save_lockfile(project / "guidelines.lock.json", next_lock)
         journal.commit()

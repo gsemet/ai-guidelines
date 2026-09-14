@@ -576,8 +576,8 @@ def update(
     try:
         plan = build_update_plan(_project()).model_copy(update={"dry_run": dry_run})
         print_update_plan(plan)
-        if dry_run or not plan.has_changes:
-            if not plan.has_changes and not dry_run:
+        if dry_run or not plan.requires_application:
+            if not plan.requires_application and not dry_run:
                 click.echo("No guideline updates are available.")
             return
         if interactive and not yes and not click.confirm("Apply these changes?", default=False):
