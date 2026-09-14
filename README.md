@@ -1,8 +1,56 @@
 # ai-guidelines
 
-`ai-guidelines` manages reusable Markdown guidelines for a project. It copies explicitly
-selected files into a project, records their source and SHA-256 hashes, and can reproduce or
-update that selection safely. It does not execute Markdown.
+`ai-guidelines` manages reusable Markdown guidelines for a project.
+
+It allows to declare dependencies on reference guidelines (on a reference git project)
+and copy/update them.
+
+## What is Guidelines?
+
+A **guideline** is reusable Markdown context containing rules or practices.
+It is declared in the project context (usually in `AGENTS.md`) and the
+agent idenfies when it will have to use it, especially during planning.
+
+> [!IMPORTANT]
+> Guidelines work like skills, as they are loaded by progressive disclosure.
+
+## Why not Intruction or rules?
+
+An **instruction file** is a GitHub Copilot specific file that is loaded
+or injected by the Coding Agent according to its file-pattern rules.
+**During planning, when the agent is thinking about the files** to edit for instance,
+the coding agent does not see any file of this type opened,
+and so **MAY not have loaded the relevant instruction files at this point**.
+
+> [!WARNING]
+> Using progressive disclosure allows to **see** when the agent loads a given guideline (or skill),
+> which is harder to detect using instruction files.
+
+This means instructions are only good to encode some low level coding
+preference, not move elaborated preferences.
+
+## Why not using skills?
+
+You can definitively use skills to encore your coding standard preferences.
+But they will all be placed at a single place in your project (ex: `.github/skills/` folders),
+making them hard to distinguish from other skills, for you and your agent.
+
+> [!TIP]
+> In a nutshell, if you declare guidelines in your project, you can just say
+> "do XX respecting project guidelines" and even small models will follow the right ones.
+
+A **skill** is a self-describing knowledge package that declares activation
+or loading behavior.
+A **Skill** can contain coding standards, and act exactely like guidelines,
+but it is good to place them in a separate location with a clear name.
+
+This tool only installs explicitly selected guidelines:
+Put project-owned loading rules in `AGENTS.md`, `CONSTITUTION.md`,
+or another project convention.
+
+> [!NOTE]
+> TL;DR: Guidelines are like skills but placed in a different location within the
+> source tree.
 
 ## Guideline, instruction, and skill
 
@@ -58,18 +106,6 @@ Use `--refresh` and `--no-cache` with search, and `guidelines cache size` to ins
 Selectors match both `.guideline.md` and `.guidelines.md` source files, including when the suffix is
 omitted. Missing source paths are reported as concise CLI errors rather than
 Python tracebacks. Installed files always use the canonical `.guidelines.md` suffix.
-
-## Python facade
-
-```python
-from pathlib import Path
-from ai_guidelines import load_manifest, parse_location, sync_manifest
-
-manifest = load_manifest(Path("guidelines.yml"))
-location = parse_location(manifest.guidelines[0].source)
-result = sync_manifest(Path.cwd())
-print(location.canonical_source, result)
-```
 
 ## Documentation
 
