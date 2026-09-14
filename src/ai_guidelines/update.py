@@ -374,6 +374,7 @@ def apply_update_plan(
         reconciliations = []
         for index, declaration, location in requests:
             planned, source = plan.entries[index], acquired[index]
+            requested_ref = declaration.requested_ref
             reviewed_resolution = planned.commit or planned.resolved_ref
             actual_resolution = source.commit or source.resolved_ref
             if reviewed_resolution is not None and actual_resolution != reviewed_resolution:
@@ -403,7 +404,7 @@ def apply_update_plan(
                 name=declaration.alias or location.display_name,
                 source=location.canonical_source,
                 source_type=location.source_type,
-                requested_ref=location.requested_ref,
+                requested_ref=requested_ref,
                 resolved_ref=source.resolved_ref
                 or ("working-tree" if location.source_type == "local" else None),
                 reference_kind=source.reference_kind,
