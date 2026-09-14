@@ -14,6 +14,25 @@ agent idenfies when it will have to use it, especially during planning.
 > [!IMPORTANT]
 > Guidelines work like skills, as they are loaded by progressive disclosure.
 
+## Any example?
+
+Sure, look this very project ! For instance look how
+[`.github/guidelines/git-commit-message.guidelines.md`](.github/guidelines/git-commit-message.guidelines.md)
+declares the rules for writing conventional Git commit messages in this project,
+and how it is referenced in `AGENTS.md`.
+
+This means the pointer to the rules for writing Git commit messages is always in the
+start of the Context Windows, so in the zone of attention of LLM.
+Any agent working in this project will follow naturally these convention,
+even if it does not has installed the same set of skills/plugins than the original
+author.
+
+They are written in this project, they are actually declared in [`guidelines.yml`](guidelines.yml)
+and are recopied into the project's guidelines folder when `guidelines update` is run (look the
+[`justfile`](justfile)).
+
+They are maintained in the sister-project [Guidelines Registry](https://github.com/gsemet/ai-guidelines-registry).
+
 ## Why not Intruction or rules?
 
 An **instruction file** is a GitHub Copilot specific file that is loaded
@@ -43,6 +62,12 @@ A **skill** is a self-describing knowledge package that declares activation
 or loading behavior.
 A **Skill** can contain coding standards, and act exactely like guidelines,
 but it is good to place them in a separate location with a clear name.
+
+> [!IMPORTANT]
+> If you use skills to encode your coding standards, use [Microsoft APM](https://github.com/microsoft/apm)
+> to do the same than this project does. Actually, this project started because
+> APM does not support guidelines files; see the following Github issue
+> [apm#2525](https://github.com/microsoft/apm/issues/2525).
 
 This tool only installs explicitly selected guidelines:
 Put project-owned loading rules in `AGENTS.md`, `CONSTITUTION.md`,

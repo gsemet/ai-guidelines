@@ -269,6 +269,25 @@ def test_apply_uses_the_exact_reviewed_commit_successfully(tmp_path: Path) -> No
     assert (project / ".guidelines-operation.lock").exists()
     assert not (project / ".ai-guidelines-operation.lock").exists()
 
+
+def test_apply_preserves_unpinned_source_identity(tmp_path: Path) -> None:
+    project, source = tmp_path / "project", tmp_path / "source"
+    project.mkdir()
+    _write(source / "team.guidelines.md", "unpinned\n")
+    declaration = GuidelineDeclaration(source="https://example.com/team/repo")
+    _manifest(project, declaration)
+    fetcher = FakeFetcher(source, "a" * 40)
+
+    from ai_guidelines.update import apply_update_plan
+
+    first_plan = build_update_plan(project, fetcher=fetcher)
+    first_result = apply_update_plan(project, first_plan, fetcher=fetcher)
+    second_plan = build_update_plan(project, fetcher=fetcher)
+
+    assert first_result.lockfile.guidelines[0].requested_ref is None
+    assert len(first_result.lockfile.guidelines) == 1
+    assert second_plan.entries[0].group == "unchanged"
+
     def test_update_sources_use_published_cache_path_after_snapshot_move(tmp_path: Path) -> None:
         """Cached update sources remain valid after cache publication moves the checkout."""
         # This regression is covered by the production acquisition path; the cache

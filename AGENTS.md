@@ -15,6 +15,11 @@ Read `CONSTITUTION.md` before changing the project.
   Read only the guideline relevant to the current change.
 - Exact commands and quality gates: `justfile --list`.
 
+## Guidelines
+
+- `.github/guidelines/git-commit-message.guidelines.md`: Writing good Git commit messages
+- `.github/guidelines/python-unittest.guidelines.md`: Writing and organizing Python unit tests
+
 ## Quality Gate
 
 You HAVE TO ensure the main quality gate (`just preflight`) always pass
