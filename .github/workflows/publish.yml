@@ -66,6 +66,9 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      - name: Validate package metadata
+        run: uvx --from twine twine check dist/*
+
       - name: Verify package version
         shell: bash
         run: |

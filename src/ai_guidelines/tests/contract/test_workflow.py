@@ -91,13 +91,30 @@ def test_release_workflow_generates_notes_from_the_local_tag(project_root: Path)
     assert "actions/upload-artifact@v4" in text
 
 
-def test_release_workflow_does_not_publish_packages(project_root: Path) -> None:
-    """Keep draft release tests from exposing a skipped production job."""
+def test_release_workflow_publishes_non_draft_releases(project_root: Path) -> None:
+    """Publish the exact released tag through OIDC after a non-draft release."""
     workflow = yaml.safe_load(
         (project_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
     )
+    publish = workflow["jobs"]["publish"]
 
-    assert set(workflow["jobs"]) == {"ci", "release"}
+    assert publish["if"] == "${{ !inputs.draft }}"
+    assert publish["needs"] == "release"
+    assert publish["environment"] == {
+        "name": "pypi",
+        "url": "https://pypi.org/p/ai-guidelines",
+    }
+    assert publish["permissions"]["id-token"] == "write"
+    assert any(
+        step.get("with", {}).get("ref") == "${{ needs.release.outputs.tag }}"
+        for step in publish["steps"]
+    )
+    assert any(
+        "uvx --from twine twine check dist/*" in step.get("run", "") for step in publish["steps"]
+    )
+    assert any(
+        step.get("uses") == "pypa/gh-action-pypi-publish@release/v1" for step in publish["steps"]
+    )
 
 
 def test_production_publish_workflow_requires_a_release_tag(project_root: Path) -> None:
