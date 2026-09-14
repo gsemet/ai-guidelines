@@ -51,7 +51,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        run: uv sync --dev --locked
+        run: uv sync --dev --locked --no-install-project
 
       - name: Refuse to release from a dirty tree
         run: |
@@ -76,7 +76,7 @@ jobs:
           if [[ "${{ inputs.force }}" == "true" ]]; then
             args+=(--allow-no-commit)
           fi
-          if ! version="$(uv run cz bump "${args[@]}" 2>bump.err)"; then
+          if ! version="$(uv run --no-sync cz bump "${args[@]}" 2>bump.err)"; then
             cat bump.err >&2
             echo "::error::Could not compute the next version. There are probably no eligible conventional commits since the last tag. Re-run with 'force' to bump anyway."
             exit 1
@@ -112,7 +112,7 @@ jobs:
           TO_REF: ${{ steps.bump.outputs.tag }}
         run: |
           set -euo pipefail
-          uv run -- python .github/skills/gh-release-notes/scripts/generate_release_notes.py \
+          uv run --no-sync python .github/skills/gh-release-notes/scripts/generate_release_notes.py \
             --from-ref "$FROM_REF" \
             --to-ref "$TO_REF" \
             --output release-notes.md
@@ -150,3 +150,52 @@ jobs:
             --title "${{ steps.bump.outputs.tag }}" \
             --notes-file release-notes.md \
             ${{ inputs.draft && '--draft' || '' }}
+
+  publish:
+    name: Publish to PyPI
+    if: ${{ !inputs.draft }}
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ai-guidelines
+    permissions:
+      contents: read
+      # Required for PyPI Trusted Publishing (OIDC). No API token is used.
+      id-token: write
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Validate package metadata
+        run: uvx --from twine twine check dist/*
+
+      - name: Verify package version
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version="${RELEASE_TAG#v}"
+          shopt -s nullglob
+          artifacts=(
+            dist/ai_guidelines-"$expected_version"-*.whl
+            dist/ai_guidelines-"$expected_version".tar.gz
+          )
+          if (( ${#artifacts[@]} != 2 )); then
+            echo "::error::Built package artifacts do not match $RELEASE_TAG."
+            printf '%s\n' dist/*
+            exit 1
+          fi
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
