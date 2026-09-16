@@ -420,7 +420,14 @@ def test_cache_keys_are_credential_free_and_pending_checkouts_unique(tmp_path: P
     second = cache.checkout_path(location)
 
     assert first != second
-    assert first.name.startswith("example.com_team_repo_main_pending_")
+    assert first.name.startswith("pending-")
+    assert len(first.name) <= 48
+    long_location = parse_location(
+        "https://example.com/" + ("very-long-team/" * 20) + "repository.git#main:guidelines/"
+    )
+    long_pending = cache.checkout_path(long_location)
+    assert long_pending.name.startswith("pending-")
+    assert len(long_pending.name) <= 48
     identity_digest = hashlib.sha256(b"example.com/team/repo").hexdigest()
     assert cache.cache_key(location, "a" * 40) == (
         "example.com_team_repo__" + identity_digest + "__" + "a" * 40
