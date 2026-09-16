@@ -6,6 +6,7 @@ import subprocess
 import traceback
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -13,6 +14,8 @@ from ai_guidelines.discovery import discover_guidelines
 from ai_guidelines.fetch import (
     SourceFetcher,
     SourceFetchError,
+    _checkout_path,
+    _run_git,
     _SourcePathNotFoundError,
     acquire_source,
 )
@@ -53,6 +56,67 @@ def test_remote_folder_uses_argument_arrays_and_sparse_checkout(tmp_path: Path) 
     assert clone[-2] == "https://example.com/team/repo"
     assert "--no-cone" in sparse
     assert any(argument.startswith("guidelines") for argument in sparse)
+
+
+def test_remote_checkout_path_stays_short_for_long_repository_names(tmp_path: Path) -> None:
+    """Keep long repository identities out of temporary Git checkout paths."""
+    repository = "https://example.com/" + ("very-long-team/" * 20) + "repository.git"
+    location = parse_location(f"{repository}#main:guidelines/")
+
+    checkout = _checkout_path(location, tmp_path)
+
+    assert checkout.parent == tmp_path
+    assert checkout.name.startswith("pending-")
+    assert len(checkout.name) <= 48
+
+
+def test_clone_related_git_commands_enable_windows_long_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enable Git long paths for clone, sparse-checkout, and checkout commands."""
+    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
+    calls: list[tuple[list[str], dict[str, str] | None]] = []
+
+    def run(command: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        """Record one mocked subprocess invocation."""
+        calls.append((list(command), kwargs.get("env")))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ai_guidelines.fetch.subprocess.run", run)
+    commands = [
+        ["clone", "--no-checkout", "https://example.com/team/repository.git", "/tmp/checkout"],
+        ["sparse-checkout", "init", "--no-cone"],
+        ["checkout", "--detach", "main"],
+    ]
+
+    for command in commands:
+        _run_git(command, Path("/tmp/checkout"))
+
+    environments = [environment for _, environment in calls if environment is not None]
+    assert [environment["GIT_CONFIG_PARAMETERS"] for environment in environments] == [
+        "'core.longpaths=true'"
+    ] * len(commands)
+
+
+def test_clone_related_git_commands_append_to_existing_config_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve existing Git configuration parameters when enabling long paths."""
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'feature.experimental=true'")
+    environments: list[dict[str, str] | None] = []
+
+    def run(command: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        """Record the environment of one mocked subprocess invocation."""
+        environments.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ai_guidelines.fetch.subprocess.run", run)
+    _run_git(["checkout", "--detach", "main"], Path("/tmp/checkout"))
+
+    assert environments[0] is not None
+    assert environments[0]["GIT_CONFIG_PARAMETERS"] == (
+        "'feature.experimental=true' 'core.longpaths=true'"
+    )
 
 
 def test_locked_revision_is_checked_out_before_return(tmp_path: Path) -> None:

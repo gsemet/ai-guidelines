@@ -569,17 +569,10 @@ class MaterializedGuidelineCache:
         return self.cache_dir / self.cache_key(location, commit)
 
     def checkout_path(self, location: SourceLocation) -> Path:
-        """Return a unique pending checkout path directly under the cache root."""
+        """Return a unique short pending checkout path under the cache root."""
         if location.repository is None:
             raise ValueError("local sources cannot have a remote checkout path")
-        repository = re.sub(r"[^A-Za-z0-9._-]+", "_", self.repository_identity(location)).strip(
-            "._-"
-        )
-        reference = re.sub(r"[^A-Za-z0-9._-]+", "_", location.requested_ref or "HEAD").strip("._-")
-        return (
-            self.cache_dir
-            / f"{repository or 'repository'}_{reference or 'HEAD'}_pending_{uuid.uuid4().hex}"
-        )
+        return self.cache_dir / f"pending-{uuid.uuid4().hex}"
 
     @property
     def metadata_path(self) -> Path:

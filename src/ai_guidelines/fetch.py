@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from hashlib import sha256
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 from urllib.parse import unquote, urlsplit
@@ -31,6 +31,8 @@ GitRunner = Callable[[Sequence[str], Path | None], str]
 ReferenceKind = Literal["branch", "tag", "ambiguous", "commit", "unknown", "local"]
 
 _COMMIT = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_CLONE_COMMANDS = frozenset({"clone", "checkout", "sparse-checkout"})
+_LONG_PATH_CONFIG_PARAMETER = "'core.longpaths=true'"
 
 
 class SourceFetchError(RuntimeError):
@@ -230,6 +232,20 @@ class SourceFetcher:
         )
 
 
+def _git_environment(args: Sequence[str]) -> dict[str, str] | None:
+    """Return Git's environment, enabling long paths for clone operations."""
+    if not args or args[0] not in _CLONE_COMMANDS:
+        return None
+    environment = os.environ.copy()
+    existing_parameters = environment.get("GIT_CONFIG_PARAMETERS")
+    environment["GIT_CONFIG_PARAMETERS"] = (
+        f"{existing_parameters} {_LONG_PATH_CONFIG_PARAMETER}"
+        if existing_parameters
+        else _LONG_PATH_CONFIG_PARAMETER
+    )
+    return environment
+
+
 def _run_git(args: Sequence[str], cwd: Path | None = None) -> str:
     """Run one Git command without a shell and return standard output."""
     completed = subprocess.run(
@@ -238,6 +254,7 @@ def _run_git(args: Sequence[str], cwd: Path | None = None) -> str:
         check=True,
         capture_output=True,
         text=True,
+        env=_git_environment(args),
     )
     return completed.stdout.strip()
 
@@ -305,19 +322,11 @@ def _validate_sparse_patterns(
 
 
 def _checkout_path(location: SourceLocation, cache_root: Path | None = None) -> Path:
-    """Return a unique cache-root checkout path for one remote ref."""
+    """Return a unique short cache-root checkout path for one remote ref."""
     if location.repository is None:
         raise ValueError("local sources do not have a remote checkout path")
     root = cache_root or Path(platformdirs.user_cache_dir("ai-guidelines")) / "guideline-sources"
-    parsed = urlsplit(location.repository)
-    repository_name = parsed.netloc + parsed.path if parsed.netloc else location.repository
-    repository_name = repository_name.rstrip("/").removesuffix(".git")
-    readable_identity = re.sub(r"[^A-Za-z0-9._-]+", "_", repository_name).strip("._-")
-    identity_digest = sha256(
-        f"{location.repository}\0{location.requested_ref or 'HEAD'}".encode()
-    ).hexdigest()[:12]
-    pending_name = f"ag_{(readable_identity or 'repository')[:8]}_{identity_digest}_pending"
-    return root / f"{pending_name}_{uuid.uuid4().hex}"
+    return root / f"pending-{uuid.uuid4().hex}"
 
 
 def _remove_checkout(path: Path) -> None:
