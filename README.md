@@ -152,6 +152,55 @@ Selectors match both `.guideline.md` and `.guidelines.md` source files, includin
 is omitted.
 Missing source paths are reported as concise CLI errors rather than Python tracebacks.
 Installed files always use the canonical `.guidelines.md` suffix.
+Add `-v` (steps) or `-vv` (Git commands and their output) before any command to diagnose a
+failure, for example `guidelines -vv add ...`.
+
+## Adding a file or a folder
+
+`guidelines add` takes a source and an optional repository-relative selector.
+The selector is installed immediately and recorded in `guidelines.yml`.
+
+Select one file (the suffix is optional):
+
+```console
+$ guidelines add gsemet/ai-guidelines-registry SWE/Git/Git_Commit_Message/git-commit-message.guidelines.md
+$ guidelines add gsemet/ai-guidelines-registry SWE/Git/Git_Commit_Message/git-commit-message
+```
+
+Select a folder: every `*.guideline.md` and `*.guidelines.md` file below it is captured,
+recursively, and flattened into the target folder.
+Other files, such as a leaf `README.md`, are skipped.
+
+```console
+$ guidelines add gsemet/ai-guidelines-registry SWE/Git/Git_Commit_Message
+$ guidelines add gsemet/ai-guidelines-registry SWE/Python
+```
+
+The second command installs both `python-module-documentation.guidelines.md` and
+`python-unittest.guidelines.md`, found in two different subfolders of `SWE/Python`.
+
+A selector without a `/` is a filename pattern matched anywhere in the source:
+
+```console
+$ guidelines add gsemet/ai-guidelines-registry "python-*"
+```
+
+## Searching a source
+
+`guidelines search` is recursive by default: it lists every guideline file anywhere below the
+source location, whatever its folder depth.
+The optional query is a glob matched against the filename, with or without its suffix.
+
+```console
+$ guidelines search gsemet/ai-guidelines-registry
+$ guidelines search gsemet/ai-guidelines-registry "*commit*"
+$ guidelines search gsemet/ai-guidelines-registry/SWE/Python
+```
+
+Each result shows the filename, the source, the source-relative path to pass to `guidelines add`,
+and whether it is already installed.
+Without a location, `guidelines search --query GLOB` searches the sources declared in
+`guidelines.yml`.
 
 ## Documentation
 

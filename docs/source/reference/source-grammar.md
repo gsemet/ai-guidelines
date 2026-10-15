@@ -93,6 +93,49 @@ paths: [SWE/Python/rules]     # suffix omitted
 `pattern`.
 `pattern` matches a filename or suffix-stripped filename with a case-sensitive filename glob.
 
+A `path` without a guideline suffix is resolved in this order:
+
+1. If it names a folder, every guideline file below it is selected, recursively.
+2. Otherwise, `<path>.guidelines.md` or `<path>.guideline.md` is selected.
+
+```yaml
+guidelines:
+  # One file, suffix included or omitted
+  - source: gsemet/ai-guidelines-registry
+    path: SWE/Git/Git_Commit_Message/git-commit-message.guidelines.md
+  - source: gsemet/ai-guidelines-registry
+    path: SWE/Python/Python_Unit_Test/python-unittest
+  # A folder: all guideline files below it, flattened into the target
+  - source: gsemet/ai-guidelines-registry
+    path: SWE/Python
+```
+
+On the command line, the second `guidelines add` argument becomes `path` when it contains a `/`
+or ends with a guideline suffix, and `pattern` otherwise:
+
+```console
+$ guidelines add gsemet/ai-guidelines-registry SWE/Git/Git_Commit_Message   # folder
+$ guidelines add gsemet/ai-guidelines-registry SWE/Python/Python_Unit_Test/python-unittest   # file
+$ guidelines add gsemet/ai-guidelines-registry "python-*"   # pattern
+```
+
+## Search
+
+`guidelines search LOCATION [QUERY]` is recursive by default: it lists every guideline file at any
+depth below `LOCATION`.
+`QUERY` is a case-sensitive glob matched against the filename, with or without its suffix.
+Each result prints the filename, the canonical source, the source-relative path to pass to
+`guidelines add`, and whether the file is installed.
+
+```console
+$ guidelines search gsemet/ai-guidelines-registry "*commit*"
+git-commit-message.guidelines.md   https://github.com/gsemet/ai-guidelines-registry   SWE/Git/Git_Commit_Message/git-commit-message.guidelines.md   no
+$ guidelines search gsemet/ai-guidelines-registry/SWE/Python
+```
+
+Without `LOCATION`, `guidelines search --query GLOB` searches the sources declared in
+`guidelines.yml`, restricted to each declaration's selectors.
+
 Synchronization always writes the canonical `.guidelines.md` suffix, regardless of the source
 filename.
 Singular/plural collisions resolve deterministically, preferring the plural source when both

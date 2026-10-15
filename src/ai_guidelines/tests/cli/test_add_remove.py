@@ -170,9 +170,44 @@ def test_add_literal_path_ref_and_target_are_normalized_and_eager(
 
     assert result.exit_code == 0
     manifest = (tmp_path / "guidelines.yml").read_text(encoding="utf-8")
-    assert "path: nested/team.guidelines.md" in manifest
+    assert "path: nested/team\n" in manifest
     assert "ref: main" in manifest
     assert "target_path: .docs" in manifest
+
+
+def test_add_folder_selector_captures_every_guideline(tmp_path: Path, monkeypatch) -> None:
+    """A selector naming a folder synchronizes every guideline file inside it."""
+    source = tmp_path / "source"
+    folder = source / "SWE/Git/Commit"
+    folder.mkdir(parents=True)
+    (folder / "commit.guidelines.md").write_text("plural\n", encoding="utf-8")
+    (folder / "message.guideline.md").write_text("singular\n", encoding="utf-8")
+    (folder / "README.md").write_text("readme\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(guidelines, ["add", str(source), "SWE/Git/Commit"])
+
+    assert result.exit_code == 0, result.output
+    target = tmp_path / ".github/guidelines"
+    assert sorted(path.name for path in target.iterdir()) == [
+        "commit.guidelines.md",
+        "message.guidelines.md",
+    ]
+
+
+def test_add_extensionless_nested_selector_finds_guideline_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An extensionless nested selector still resolves a suffixed guideline file."""
+    source = tmp_path / "source"
+    (source / "nested").mkdir(parents=True)
+    (source / "nested/team.guideline.md").write_text("nested\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(guidelines, ["add", str(source), "nested/team"])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".github/guidelines/team.guidelines.md").read_text() == "nested\n"
 
 
 def _run_add_selector(
