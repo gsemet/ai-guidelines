@@ -1,8 +1,26 @@
 ## Unreleased
 
+### Feat
+
+- support capture all guidelines in path
+
+## v1.2.0 (2026-09-16)
+
 ### Fix
 
+- **ci**: use public PyPI lockfile for releases
+- **fetch**: support Windows long Git paths
+
+## v1.1.0 (2026-09-14)
+
+### Fix
+
+- update duplicate bug
 - guidelines update
+
+### Refactor
+
+- rewrap docs, simplifying and rework structure of code
 
 ## v1.0.1 (2026-09-13)
 

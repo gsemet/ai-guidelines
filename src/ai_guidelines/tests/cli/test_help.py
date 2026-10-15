@@ -1,8 +1,23 @@
 """Contract tests for the standalone command surface."""
 
+import logging
+
 from click.testing import CliRunner
 
 from ai_guidelines.cli import guidelines
+
+
+def test_verbose_option_enables_package_diagnostics() -> None:
+    """Repeated verbose flags raise package logging to debug level."""
+    logger = logging.getLogger("ai_guidelines")
+    previous = logger.level
+    try:
+        result = CliRunner().invoke(guidelines, ["-vv", "cache", "dir"])
+
+        assert result.exit_code == 0, result.output
+        assert logger.level == logging.DEBUG
+    finally:
+        logger.setLevel(previous)
 
 
 def test_root_help_exposes_only_standalone_commands() -> None:

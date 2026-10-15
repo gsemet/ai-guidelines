@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from contextlib import suppress
 from fnmatch import fnmatchcase
@@ -46,6 +47,8 @@ from ai_guidelines.update import (
     inspect_outdated,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _project() -> Path:
     """Return the current working directory as the consumer project root."""
@@ -63,14 +66,42 @@ def _error(error: Exception) -> click.ClickException:
     return click.ClickException(str(error))
 
 
+def _configure_logging(verbosity: int) -> None:
+    """Route package diagnostics to standard error at the requested verbosity."""
+    logger = logging.getLogger("ai_guidelines")
+    if verbosity <= 0:
+        logger.setLevel(logging.WARNING)
+        return
+    logger.setLevel(logging.INFO if verbosity == 1 else logging.DEBUG)
+    if not any(getattr(handler, "_ai_guidelines_cli", False) for handler in logger.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler._ai_guidelines_cli = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+
+
 @click.group(name="guidelines", context_settings={"help_option_names": ["-h", "--help"]})
-def guidelines() -> None:
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Log diagnostics to stderr (-v for steps, -vv for Git commands and output).",
+)
+def guidelines(verbose: int) -> None:
     """Manage reusable project-owned Markdown guidelines.
 
     .. versionchanged:: 0.2.0
         Commands now share the source, lock, cache, and target safety contracts
         exposed by the Python API.
+
+    .. versionchanged:: 1.3.0
+        Added ``-v``/``--verbose`` diagnostics.
+
+    Args:
+        verbose:
+            Diagnostic verbosity level.
     """
+    _configure_logging(verbose)
 
 
 @guidelines.command("sync")
@@ -358,11 +389,11 @@ def search(
 
 
 def _literal(value: str) -> str:
-    """Normalize a CLI path selector to the plural guideline suffix."""
+    """Normalize a CLI path selector, keeping extensionless paths as file-or-folder."""
     value = value.strip("/\\").replace("\\", "/")
     if value.endswith(".guideline.md"):
         return f"{value[: -len('.guideline.md')]}.guidelines.md"
-    return value if value.endswith(".guidelines.md") else value + ".guidelines.md"
+    return value
 
 
 @guidelines.command("add")
@@ -420,6 +451,15 @@ def add(
                 or pattern.endswith((".guideline.md", ".guidelines.md"))
             )
             path = _literal(pattern) if exact and pattern else None
+            logger.info(
+                "Parsed source %s (repository=%s, ref=%s, path=%s); selector %r -> %s",
+                location,
+                parsed.repository or parsed.local_path,
+                parsed.requested_ref,
+                parsed.relative_path,
+                pattern,
+                f"literal path {path!r}" if path else f"filename pattern {pattern!r}",
+            )
             if path:
                 parsed = with_source_path(parsed, path, kind="file")
             declaration = GuidelineDeclaration(

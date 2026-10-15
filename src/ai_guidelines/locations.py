@@ -654,6 +654,12 @@ def with_source_path(
                 raise LocationParseError("local source path must remain within its source root")
         except OSError:
             raise LocationParseError("local source path could not be resolved safely") from None
+        if not local_path.exists() and not normalized.endswith((".guideline.md", ".guidelines.md")):
+            for suffix in (".guidelines.md", ".guideline.md"):
+                suffixed = local_path.with_name(f"{local_path.name}{suffix}")
+                if suffixed.is_file():
+                    local_path = suffixed
+                    break
         if local_path.exists():
             selected_kind: LocationKind = "file" if local_path.is_file() else "folder"
         else:

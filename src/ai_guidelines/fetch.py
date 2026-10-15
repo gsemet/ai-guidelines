@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -33,6 +34,14 @@ ReferenceKind = Literal["branch", "tag", "ambiguous", "commit", "unknown", "loca
 _COMMIT = re.compile(r"^[0-9a-fA-F]{7,64}$")
 _CLONE_COMMANDS = frozenset({"clone", "checkout", "sparse-checkout"})
 _LONG_PATH_CONFIG_PARAMETER = "'core.longpaths=true'"
+_URL_CREDENTIALS = re.compile(r"(://)[^/@\s]+@")
+
+logger = logging.getLogger(__name__)
+
+
+def _redact(value: str) -> str:
+    """Hide URL credentials before a value reaches diagnostic logs."""
+    return _URL_CREDENTIALS.sub(r"\1***@", value)
 
 
 class SourceFetchError(RuntimeError):
@@ -91,14 +100,25 @@ def _resolve_existing_source_path(
 ) -> tuple[Path, SourceLocation]:
     """Resolve a source path while accepting either supported filename suffix."""
     requested = location.relative_path
-    candidates = (requested,) if requested == "." else (requested, *_suffix_variants(requested))
+    candidates = (
+        (requested,)
+        if requested == "."
+        else tuple(dict.fromkeys((requested, *_suffix_variants(requested))))
+    )
     for candidate in candidates:
         path = _safe_source_path(root, candidate)
+        logger.debug(
+            "Checking source path %r: %s", candidate, "found" if path.exists() else "missing"
+        )
         if path.exists():
             resolved = with_source_path(location, candidate) if candidate != requested else location
             if path.is_dir() and resolved.kind != "folder":
                 resolved = replace_source_location(resolved, kind="folder")
+            logger.info("Resolved source path %r (%s)", candidate, resolved.kind)
             return path, resolved
+    logger.info(
+        "None of the candidate paths %s exist in the checkout at %s", list(candidates), root
+    )
     raise _SourcePathNotFoundError(location, _suggest_source_path(root, location, runner))
 
 
@@ -248,14 +268,24 @@ def _git_environment(args: Sequence[str]) -> dict[str, str] | None:
 
 def _run_git(args: Sequence[str], cwd: Path | None = None) -> str:
     """Run one Git command without a shell and return standard output."""
-    completed = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_git_environment(args),
-    )
+    logger.debug("git %s (cwd=%s)", _redact(" ".join(args)), cwd)
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_git_environment(args),
+        )
+    except subprocess.CalledProcessError as error:
+        logger.debug(
+            "git %s failed with exit code %s: %s",
+            args[0] if args else "",
+            error.returncode,
+            _redact((error.stderr or "").strip()),
+        )
+        raise
     return completed.stdout.strip()
 
 
@@ -365,8 +395,12 @@ def _suggest_source_path(
     try:
         output = runner(["ls-tree", "-r", "--name-only", "HEAD"], root)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+        logger.debug("Could not list repository files for a path suggestion")
         return None
     suffix = f"/{location.relative_path}"
+    requested_stem = location.relative_path.removesuffix(".guidelines.md").removesuffix(
+        ".guideline.md"
+    )
     matches: set[str] = set()
     for line in output.splitlines():
         candidate = line.strip()
@@ -378,13 +412,16 @@ def _suggest_source_path(
             matches.add(candidate)
             continue
         candidate_stem = candidate.removesuffix(".guidelines.md").removesuffix(".guideline.md")
-        requested_stem = location.relative_path.removesuffix(".guidelines.md").removesuffix(
-            ".guideline.md"
-        )
-        if candidate_stem == requested_stem or candidate.startswith(
-            f"{location.relative_path.rstrip('/')}/"
+        if (
+            candidate_stem == requested_stem
+            or candidate.startswith(f"{location.relative_path.rstrip('/')}/")
+            or (
+                candidate.startswith(f"{requested_stem.rstrip('/')}/")
+                and candidate.endswith((".guidelines.md", ".guideline.md"))
+            )
         ):
             matches.add(candidate)
+    logger.debug("Path suggestions for %r: %s", location.relative_path, sorted(matches))
     return next(iter(matches)) if len(matches) == 1 else None
 
 
@@ -508,17 +545,28 @@ def _clone_remote(
         if location.relative_path != ".":
             sparse_path = location.relative_path
             if location.kind == "folder":
-                sparse_path = f"{sparse_path.rstrip('/')}/*"
-            patterns.append(sparse_path)
+                patterns.append(f"{sparse_path.rstrip('/')}/*")
+            elif sparse_path.endswith((".guideline.md", ".guidelines.md")):
+                patterns.append(sparse_path)
+            else:
+                patterns.extend(_sparse_patterns_for_location(location))
         if validated_sparse_pattern is not None:
             patterns.append(validated_sparse_pattern)
         patterns.extend(validated_sparse_patterns)
         if not patterns:
             patterns.append("*")
+        logger.info(
+            "Checking out %s at %s (%s) with sparse patterns %s",
+            _redact(location.repository),
+            resolved_ref or "default branch",
+            reference_kind,
+            list(dict.fromkeys(patterns)),
+        )
         runner(["sparse-checkout", "set", "--no-cone", *dict.fromkeys(patterns)], checkout)
         runner(["checkout", "--detach", resolved_ref or "HEAD"], checkout)
         commit = runner(["rev-parse", "HEAD"], checkout).strip() or None
-    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        logger.info("Git acquisition failed: %s", _redact(str(error)))
         raise SourceFetchError("could not acquire the requested guideline source") from None
     return resolved_ref, commit, reference_kind
 
@@ -641,12 +689,14 @@ def _sparse_pattern(location: SourceLocation) -> str:
 
 
 def _sparse_patterns_for_location(location: SourceLocation) -> tuple[str, ...]:
-    """Return sparse patterns covering both supported guideline suffixes."""
+    """Return sparse patterns covering a folder or either guideline suffix."""
     if location.kind == "folder" or not location.relative_path.endswith(
         (".guideline.md", ".guidelines.md")
     ):
         path = location.relative_path.rstrip("/")
-        return (path, f"{path}/*")
+        if location.kind == "folder" or path == ".":
+            return (path, f"{path}/*")
+        return (path, f"{path}/*", *_suffix_variants(path))
     return _suffix_variants(location.relative_path)
 
 

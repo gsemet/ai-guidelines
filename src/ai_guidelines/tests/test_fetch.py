@@ -19,7 +19,7 @@ from ai_guidelines.fetch import (
     _SourcePathNotFoundError,
     acquire_source,
 )
-from ai_guidelines.locations import SourceLocation, parse_location
+from ai_guidelines.locations import SourceLocation, parse_location, with_source_path
 
 
 def test_remote_folder_uses_argument_arrays_and_sparse_checkout(tmp_path: Path) -> None:
@@ -323,6 +323,63 @@ def test_missing_remote_path_has_actionable_safe_suggestion(tmp_path: Path) -> N
     assert "repository root" in message
     assert "guidelines/Engineering/team.guideline.md" in message
     assert "#main:guidelines/Engineering/team.guideline.md" in message
+
+
+def test_missing_path_naming_a_folder_suggests_its_guideline(tmp_path: Path) -> None:
+    """Suggest the guideline inside a folder when a selector names that folder."""
+
+    def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Simulate a repository storing the guideline inside a same-named folder."""
+        command = list(args)
+        if command[0] == "clone":
+            Path(command[-1]).mkdir(parents=True, exist_ok=True)
+        if command[:2] == ["ls-tree", "-r"]:
+            return (
+                "SWE/Git/Git_Commit_Message/README.md\n"
+                "SWE/Git/Git_Commit_Message/git-commit-message.guidelines.md\n"
+            )
+        if command[:2] == ["rev-parse", "HEAD"]:
+            return "a" * 40
+        return ""
+
+    location = parse_location(
+        "https://example.com/team/repo#main:SWE/Git/Git_Commit_Message.guidelines.md"
+    )
+    with (
+        pytest.raises(_SourcePathNotFoundError) as error,
+        acquire_source(location, runner=runner, temp_root=tmp_path),
+    ):
+        pass
+
+    assert "'SWE/Git/Git_Commit_Message/git-commit-message.guidelines.md'" in str(error.value)
+
+
+def test_extensionless_remote_path_resolves_folder(tmp_path: Path) -> None:
+    """An extensionless remote path naming a folder resolves as a folder source."""
+    commands: list[list[str]] = []
+
+    def runner(args: Sequence[str], _cwd: Path | None = None) -> str:
+        """Materialize a folder holding the guideline."""
+        command = list(args)
+        commands.append(command)
+        if command[0] == "clone":
+            folder = Path(command[-1]) / "SWE/Git/Commit"
+            folder.mkdir(parents=True)
+            (folder / "commit.guidelines.md").write_text("commit", encoding="utf-8")
+        if command[:2] == ["rev-parse", "HEAD"]:
+            return "a" * 40
+        return ""
+
+    location = with_source_path(
+        parse_location("https://example.com/team/repo#main"), "SWE/Git/Commit"
+    )
+    with SourceFetcher(runner=runner, temp_root=tmp_path).acquire_many([location]) as acquired:
+        assert acquired[0].location.kind == "folder"
+        assert acquired[0].path.is_dir()
+
+    sparse = next(command for command in commands if command[:2] == ["sparse-checkout", "set"])
+    assert "SWE/Git/Commit/*" in sparse
+    assert "SWE/Git/Commit.guidelines.md" in sparse
 
 
 def test_extensionless_remote_path_resolves_guideline_suffix(tmp_path: Path) -> None:
